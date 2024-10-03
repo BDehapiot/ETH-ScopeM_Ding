@@ -2,42 +2,48 @@
 
 import tifffile
 import numpy as np
+from skimage import io
 from pathlib import Path
 from joblib import Parallel, delayed 
 
-# bdtools
-from bdtools.norm import norm_gcn, norm_pct
-from bdtools.nan import nan_replace
-
 # Skimage
 from skimage.transform import rescale
-from skimage.morphology import disk
-from skimage.filters import median
 
 #%% Inputs --------------------------------------------------------------------
 
 data_path = Path("D:\local_Ding\data")
-# data_name = "Exp1.ome"
+rf = 0.1
 
 #%% Function: extract() -------------------------------------------------------
 
-# memmap = tifffile.memmap(str(Path(data_path, data_name)))
-# nT, nY, nX = memmap.shape
-
-# def load(memmap):
-#     return rescale(memmap, 0.1, order=0)
+def extract(path, rf):
     
-# stack = Parallel(n_jobs=-1)(
-#     delayed(load)(memmap[t,...])
-#     for t in range(nT)
-#     )
-# stack = np.stack(stack).astype("float32")
-# if data_name == "Exp1.ome":
-#     stack = stack[:-1]
-
+    # Nested function(s) ------------------------------------------------------
+    
+    def _extract(img, rf):
+        return rescale(img, rf, order=0)
+    
+    # Execute -----------------------------------------------------------------
+    
+    memmap = tifffile.memmap(str(path))
+    stack = Parallel(n_jobs=-1)(
+        delayed(_extract)(memmap[t,...], rf)
+        for t in range(memmap.shape[0])
+        )
+    
+    return np.stack(stack)   
 
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
     
-    pass
+    for path in data_path.glob("*.ome"):
+        stack = extract(path, rf)
+        
+        if path.name == "Exp1.ome":
+            stack = stack[:-1]
+            
+        io.imsave(
+            path.parent / f"{path.stem}_rf-{rf}.tif",
+            stack.astype("uint8"), check_contrast=False,
+            )        
