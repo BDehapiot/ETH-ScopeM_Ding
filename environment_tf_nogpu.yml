@@ -1,0 +1,31 @@
+name: ding
+
+channels:
+  - conda-forge
+
+dependencies:
+  # conda_core
+  - python=3.10
+  - numpy=1.24*
+  - numba
+  - scipy
+  - pandas
+  - scikit-image
+  - opencv
+  - scikit-learn
+  - joblib
+  - matplotlib-base
+  - pip
+  # conda_spec
+  - napari=0.5.3
+  - pyqt
+  - spyder
+  # conda_tf_nogpu
+  - pip:
+    # pip_core
+    - bd-tools==0.2.1
+    # pip_spec
+    # pip_tf_nogpu
+    - albumentations
+    - segmentation-models
+    - tensorflow==2.10
