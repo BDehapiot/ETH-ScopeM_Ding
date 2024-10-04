@@ -44,6 +44,6 @@ if __name__ == "__main__":
             stack = stack[:-1]
             
         io.imsave(
-            path.parent / f"{path.stem}_rf-{rf}.tif",
+            path.parent / f"{path.stem}_rf-{rf}_stack.tif",
             stack.astype("uint8"), check_contrast=False,
             )        

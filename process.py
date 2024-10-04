@@ -45,31 +45,42 @@ def roll_avg(stack, window_size):
 
 if __name__ == "__main__":
     
-    for path in data_path.glob("*.tif"):
-        if "Exp1" in path.stem:
-            stack = process(io.imread(path))   
+    rf = 0.1
+    window_size = 501
+    
+    for path in data_path.glob(f"*rf-{rf}*"):
+        stack = process(io.imread(path))  
+        rstack = roll_avg(stack, window_size)
+        io.imsave(
+            path.parent / (path.name.replace("raw", "stack")),
+            stack.astype("uint8"), check_contrast=False,
+            )  
+        io.imsave(
+            path.parent / (path.name.replace("raw", "rstack")),
+            rstack.astype("float32"), check_contrast=False,
+            )        
+
             
 #%%
 
-from skimage.filters import gaussian
+# from skimage.filters import gaussian
 
 # -------------------------------------------------------------------------
 
-t0 = time.time()
-rstack = roll_avg(stack, 501)
-t1 = time.time()
-print(f"roll_avg() : {t1 - t0:.3f}")
+# t0 = time.time()
+# rstack = roll_avg(stack, 501)
+# t1 = time.time()
+# print(f"roll_avg() : {t1 - t0:.3f}")
 
-t0 = time.time()
-for img in rstack:
-    img = gaussian(img, sigma=3)
-t1 = time.time()
-print(f"median() : {t1 - t0:.3f}")
+# io.imsave(
+#     path.parent / (path.stem.replace("stack", "rstack")),
+#     rstack.astype("float32"), check_contrast=False,
+#     )        
 
 # -------------------------------------------------------------------------
 
-import napari
-viewer = napari.Viewer()
-viewer.add_image(stack, contrast_limits=(98, 120))
-viewer.add_image(rstack, contrast_limits=(98, 120))
+# import napari
+# viewer = napari.Viewer()
+# viewer.add_image(stack, contrast_limits=(98, 120))
+# viewer.add_image(rstack, contrast_limits=(98, 120))
         
