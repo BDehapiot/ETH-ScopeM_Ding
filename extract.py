@@ -60,11 +60,11 @@ if __name__ == "__main__":
         stack, rstack = extract(path, rf, window_size)
                     
         io.imsave(
-            path.parent / f"{path.stem}_rf-{rf}_stack.tif",
+            data_path / f"{path.stem}_rf-{rf}_stack.tif",
             stack.astype("float32"), check_contrast=False,
             )       
         
         io.imsave(
-            path.parent / f"{path.stem}_rf-{rf}_rstack.tif",
+            data_path / f"{path.stem}_rf-{rf}_rstack.tif",
             rstack.astype("float32"), check_contrast=False,
             )  
