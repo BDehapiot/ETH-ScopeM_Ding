@@ -40,30 +40,28 @@ def analyse(stack, mask):
       return z
   
     def _analyse(val):
-        val_bsub = val - als(val)
-        val_ccr = correlate(val_bsub, val_bsub, mode='full')
-        val_ccr = val_ccr[val_ccr.size // 2:]
-        return val_bsub, val_ccr      
-
-    # result = correlate(signal, signal, mode='full')
-    # autocorr = result[result.size // 2:]
+        bsub = val - als(val)
+        accr = correlate(bsub, bsub, mode='full')
+        accr = accr[accr.size // 2:]
+        accr /= accr[0] # Zero lag normalization
+        return bsub, accr      
 
     # Execute -----------------------------------------------------------------  
     
     data = {
         "label" : [],
         "vals" : [],
-        "vals_bsub" : [],
-        "vals_ccr" : [],
+        "bsub" : [],
+        "accr" : [],
         }
     
     # Filter stack
-    stack = norm_gcn(norm_pct(stack))
+    stack = norm_pct(norm_gcn(stack), pct_low=0, pct_high=100)
     stack_filt = nan_filt(
         stack, mask=mask > 0, kernel_size=(1, 3, 3), iterations=3)
     
-    #
-    stack_filt_bsub = np.zeros_like(stack_filt)
+    # Analyse
+    stack_bsub = np.zeros_like(stack_filt)
     for lab in np.unique(mask)[1:]:
         idx = np.where(mask == lab)
         vals = stack[:, idx[0], idx[1]]
@@ -71,17 +69,17 @@ def analyse(stack, mask):
             delayed(_analyse)(vals[:, i])
             for i in range(vals.shape[1])
             )
-        vals_bsub = np.vstack([data[0] for data in outputs]).T
-        vals_ccr = np.vstack([data[1] for data in outputs]).T
-        stack_filt_bsub[:, idx[0], idx[1]] = vals_bsub
+        bsub = np.vstack([data[0] for data in outputs]).T
+        accr = np.vstack([data[1] for data in outputs]).T
+        stack_bsub[:, idx[0], idx[1]] = bsub
 
         # Append data
         data["label"].append(lab)
         data["vals"].append(vals)
-        data["vals_bsub"].append(vals_bsub)
-        data["vals_ccr"].append(vals_ccr)
+        data["bsub"].append(bsub)
+        data["accr"].append(accr)
     
-    return stack_filt, stack_filt_bsub
+    return stack_filt, stack_bsub
 
 #%% Execute -------------------------------------------------------------------
 
@@ -89,41 +87,66 @@ if __name__ == "__main__":
     
     rf = 0.1
     
-    for path in data_path.glob(f"*rf-{rf}_stack*"):    
-        if path.name == "Exp1_rf-0.1_stack.tif":
+    for path in data_path.glob(f"*rf-{rf}_stack.tif*"):    
             
-            stack = io.imread(path)
-            stack = norm_gcn(norm_pct(stack))
+        stack = io.imread(path)
+        mask = io.imread(str(path).replace("stack", "mask"))
+        stack_filt, stack_bsub = analyse(stack, mask)       
+        
+        # Save
+        io.imsave(
+            str(path).replace("stack", "stack_filt"),
+            stack_filt.astype("float32"), check_contrast=False,
+            )
+        io.imsave(
+            str(path).replace("stack", "stack_bsub"),
+            stack_bsub.astype("float32"), check_contrast=False,
+            )
+     
+            # # Display
+            # import napari
+            # viewer = napari.Viewer()
+            # viewer.add_image(stack)
+            # viewer.add_image(stack_filt)
+            # viewer.add_image(stack_filt_bsub)
             
-            
-            # mask = io.imread(str(path).replace("stack", "mask"))
-            # stack_filt, stack_filt_bsub = analyse(stack, mask)       
-            
-            # # Save
-            # io.imsave(
-            #     str(path).replace("stack", "stack_filt"),
-            #     stack_filt.astype("float32"), check_contrast=False,
-            #     )
-            # io.imsave(
-            #     str(path).replace("stack", "stack_filt_bsub"),
-            #     stack_filt_bsub.astype("float32"), check_contrast=False,
-            #     )
-           
 #%%
 
-# test = data["vals_ccr"][13]
-# test_avg = np.mean(test, axis=1)
-# plt.figure(figsize=(10, 6))
-# plt.plot(test_avg, label='test_avg')
-# plt.legend()
-# plt.show()
+# idx = 4
+# vals_avg = np.vstack([np.mean(dat, axis=1) for dat in data["vals"]]).T
+# bsub_avg = np.vstack([np.mean(dat, axis=1) for dat in data["bsub"]]).T
+# accr_avg = np.vstack([np.mean(dat, axis=1) for dat in data["accr"]]).T
 
-# Display
-import napari
-viewer = napari.Viewer()
-viewer.add_image(stack)
-# viewer.add_image(stack_filt)
-# viewer.add_image(stack_filt_bsub)
+# # Plot
+# plt.figure(figsize=(10, 12))
+
+# # vals_avg
+# plt.subplot(3, 1, 1)
+# plt.plot(vals_avg[:, idx], label="Raw Values (vals_avg)")
+# plt.plot(vals_avg[:, idx] - bsub_avg[:, idx], label="vals_avg - bsub_avg", linestyle='--')
+# plt.title("Raw Values Data")
+# plt.legend()
+# plt.xlabel("Time/Index")
+# plt.ylabel("Amplitude")
+
+# # bsub_avg
+# plt.subplot(3, 1, 2)
+# plt.plot(bsub_avg[:, idx], label="Baseline Subtracted (bsub_avg)")
+# plt.title("Baseline Subtracted Data")
+# plt.legend()
+# plt.xlabel("Time/Index")
+# plt.ylabel("Amplitude")
+
+# # accr_avg
+# plt.subplot(3, 1, 3)
+# plt.plot(accr_avg[:, idx], label="Autocorrelation (accr_avg)")
+# plt.title("Autocorrelation")
+# plt.legend()
+# plt.xlabel("Lag")
+# plt.ylabel("Correlation")
+
+# plt.tight_layout()
+# plt.show()
            
 #%%
 
