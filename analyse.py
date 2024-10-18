@@ -112,7 +112,7 @@ if __name__ == "__main__":
             
 #%%
 
-# idx = 4
+# idx = 5
 # vals_avg = np.vstack([np.mean(dat, axis=1) for dat in data["vals"]]).T
 # bsub_avg = np.vstack([np.mean(dat, axis=1) for dat in data["bsub"]]).T
 # accr_avg = np.vstack([np.mean(dat, axis=1) for dat in data["accr"]]).T
@@ -150,10 +150,7 @@ if __name__ == "__main__":
            
 #%%
 
-# from scipy.sparse import diags, spdiags
-# from scipy.sparse.linalg import spsolve
-
-# def als(y, lam, p, niter=5):
+# def als(y, lam=1e7, p=0.001, niter=5):
 #   L = len(y)
 #   D = diags([1,-2,1],[0,-1,-2], shape=(L,L-2))
 #   w = np.ones(L)

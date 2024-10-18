@@ -14,7 +14,10 @@ from scipy.ndimage import uniform_filter1d
 
 #%% Inputs --------------------------------------------------------------------
 
+# Path
 data_path = Path("D:\local_Ding\data")
+
+# Parameters
 rf = 0.1
 window_size = 501
 

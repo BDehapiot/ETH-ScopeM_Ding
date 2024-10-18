@@ -19,7 +19,11 @@ from scipy.ndimage import binary_fill_holes
 
 #%% Inputs --------------------------------------------------------------------
 
+# Path
 data_path = Path("D:\local_Ding\data")
+
+# Parameters
+min_size = 64
 
 #%% Function(s): --------------------------------------------------------------
 
@@ -53,7 +57,7 @@ if __name__ == "__main__":
         
         stack = io.imread(path)
         rstack = io.imread(str(path).replace("stack", "rstack"))
-        probs, mask = process(stack, rstack, model_path)
+        probs, mask = process(stack, rstack, model_path, min_size=min_size)
         
         # Save
         io.imsave(
