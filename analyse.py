@@ -112,41 +112,41 @@ if __name__ == "__main__":
             
 #%%
 
-# idx = 5
-# vals_avg = np.vstack([np.mean(dat, axis=1) for dat in data["vals"]]).T
-# bsub_avg = np.vstack([np.mean(dat, axis=1) for dat in data["bsub"]]).T
-# accr_avg = np.vstack([np.mean(dat, axis=1) for dat in data["accr"]]).T
+idx = 5
+vals_avg = np.vstack([np.mean(dat, axis=1) for dat in data["vals"]]).T
+bsub_avg = np.vstack([np.mean(dat, axis=1) for dat in data["bsub"]]).T
+accr_avg = np.vstack([np.mean(dat, axis=1) for dat in data["accr"]]).T
 
-# # Plot
-# plt.figure(figsize=(10, 12))
+# Plot
+plt.figure(figsize=(10, 12))
 
-# # vals_avg
-# plt.subplot(3, 1, 1)
-# plt.plot(vals_avg[:, idx], label="Raw Values (vals_avg)")
-# plt.plot(vals_avg[:, idx] - bsub_avg[:, idx], label="vals_avg - bsub_avg", linestyle='--')
-# plt.title("Raw Values Data")
-# plt.legend()
-# plt.xlabel("Time/Index")
-# plt.ylabel("Amplitude")
+# vals_avg
+plt.subplot(3, 1, 1)
+plt.plot(vals_avg[:, idx], label="Raw Values (vals_avg)")
+plt.plot(vals_avg[:, idx] - bsub_avg[:, idx], label="vals_avg - bsub_avg", linestyle='--')
+plt.title("Raw Values Data")
+plt.legend()
+plt.xlabel("Time/Index")
+plt.ylabel("Amplitude")
 
-# # bsub_avg
-# plt.subplot(3, 1, 2)
-# plt.plot(bsub_avg[:, idx], label="Baseline Subtracted (bsub_avg)")
-# plt.title("Baseline Subtracted Data")
-# plt.legend()
-# plt.xlabel("Time/Index")
-# plt.ylabel("Amplitude")
+# bsub_avg
+plt.subplot(3, 1, 2)
+plt.plot(bsub_avg[:, idx], label="Baseline Subtracted (bsub_avg)")
+plt.title("Baseline Subtracted Data")
+plt.legend()
+plt.xlabel("Time/Index")
+plt.ylabel("Amplitude")
 
-# # accr_avg
-# plt.subplot(3, 1, 3)
-# plt.plot(accr_avg[:, idx], label="Autocorrelation (accr_avg)")
-# plt.title("Autocorrelation")
-# plt.legend()
-# plt.xlabel("Lag")
-# plt.ylabel("Correlation")
+# accr_avg
+plt.subplot(3, 1, 3)
+plt.plot(accr_avg[:, idx], label="Autocorrelation (accr_avg)")
+plt.title("Autocorrelation")
+plt.legend()
+plt.xlabel("Lag")
+plt.ylabel("Correlation")
 
-# plt.tight_layout()
-# plt.show()
+plt.tight_layout()
+plt.show()
            
 #%%
 
