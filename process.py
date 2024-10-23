@@ -27,11 +27,7 @@ min_size = 64
 
 #%% Function(s): --------------------------------------------------------------
 
-def process(
-        stack, rstack, 
-        model_path,
-        min_size=64,
-        ):
+def process(rstack, model_path, min_size=64):
     
     # Execute -----------------------------------------------------------------
 
@@ -53,11 +49,10 @@ if __name__ == "__main__":
     rf = 0.1
     model_path = Path.cwd() / "model" /"model_normal"
     
-    for path in data_path.glob(f"*rf-{rf}_stack*"):
+    for path in data_path.glob(f"*rf-{rf}_rstack*"):
         
-        stack = io.imread(path)
-        rstack = io.imread(str(path).replace("stack", "rstack"))
-        probs, mask = process(stack, rstack, model_path, min_size=min_size)
+        rstack = io.imread(path)
+        probs, mask = process(rstack, model_path, min_size=min_size)
         
         # Save
         io.imsave(
