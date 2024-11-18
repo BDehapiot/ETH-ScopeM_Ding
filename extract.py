@@ -12,6 +12,13 @@ from skimage.transform import rescale
 # Scipy
 from scipy.ndimage import uniform_filter1d
 
+#%% Comments ------------------------------------------------------------------
+
+'''
+- add rolling average procedure to process (remove it from extract)
+- speed up predictions by predicting one frame over n (since at the end you avg)
+'''
+
 #%% Inputs --------------------------------------------------------------------
 
 # Path

@@ -1,5 +1,6 @@
 #%% Imports -------------------------------------------------------------------
 
+import time
 import numpy as np
 from skimage import io
 from pathlib import Path
@@ -9,6 +10,8 @@ from model.model_functions import predict
 
 # bdtools
 from bdtools.nan import nan_filt
+from bdtools.mask import get_edt
+from bdtools.norm import norm_gcn, norm_pct
 
 # Skimage
 from skimage.measure import label
@@ -27,7 +30,7 @@ min_size = 64
 
 #%% Function(s): --------------------------------------------------------------
 
-def process(rstack, model_path, min_size=64):
+def process(stack, rstack, model_path, min_size=64):
     
     # Execute -----------------------------------------------------------------
 
@@ -39,8 +42,17 @@ def process(rstack, model_path, min_size=64):
     mask = binary_fill_holes(mask)
     mask = remove_small_objects(mask, min_size=64)
     mask = label(mask)
-           
-    return probs, mask
+    
+    # Get edt
+    edt = get_edt(mask)
+    
+    # Filter stack
+    stack_filt = nan_filt(
+        norm_pct(norm_gcn(stack), pct_low=0, pct_high=100), 
+        mask=mask > 0, kernel_size=(1, 3, 3), iterations=3,
+        )
+               
+    return probs, mask, edt, stack_filt
     
 #%% Execute -------------------------------------------------------------------
 
@@ -49,10 +61,17 @@ if __name__ == "__main__":
     rf = 0.1
     model_path = Path.cwd() / "model" /"model_normal"
     
-    for path in data_path.glob(f"*rf-{rf}_rstack*"):
+    for path in data_path.glob(f"*rf-{rf}_stack*"):
         
-        rstack = io.imread(path)
-        probs, mask = process(rstack, model_path, min_size=min_size)
+        t0 = time.time()
+        
+        stack = io.imread(path)
+        rstack = io.imread(str(path).replace("stack", "rstack"))
+        probs, mask, edt, stack_filt = process(
+            stack, rstack, model_path, min_size=min_size)
+        
+        t1 = time.time()
+        print("runtime : {t1 - t0}s")
         
         # Save
         io.imsave(
@@ -62,5 +81,13 @@ if __name__ == "__main__":
         io.imsave(
             str(path).replace("stack", "mask"),
             mask.astype("uint8"), check_contrast=False,
+            )
+        io.imsave(
+            str(path).replace("stack", "edt"),
+            edt.astype("float32"), check_contrast=False,
+            )
+        io.imsave(
+            str(path).replace("stack", "stack_filt"),
+            stack_filt.astype("float32"), check_contrast=False,
             )
 
