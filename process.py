@@ -18,60 +18,76 @@ from skimage.measure import label
 from skimage.morphology import remove_small_objects
 
 # Scipy
-from scipy.ndimage import binary_fill_holes
+from scipy.ndimage import binary_fill_holes, uniform_filter1d
 
 #%% Inputs --------------------------------------------------------------------
 
-# Path
+# Paths
 data_path = Path("D:\local_Ding\data")
+model_path = Path.cwd() / "model" /"model_normal"
 
 # Parameters
-min_size = 64
+rf = 0.1
+window_size = 501
+min_size = 256
 
 #%% Function(s): --------------------------------------------------------------
 
-def process(stack, rstack, model_path, min_size=64):
+def process(stack, model_path, window_size=501, min_size=64):
+    
+    # Nested function(s) --------------------------------------------------------
+    
+    def rolling_avg(stack, window_size):
+        if window_size % 2 == 0:
+            raise ValueError("Window size must be odd.")
+        pad = window_size // 2
+        stack = np.pad(
+            stack, ((pad, pad), (0, 0), (0, 0)), mode='reflect')
+        stack = uniform_filter1d(stack, size=window_size, axis=0)
+        return stack[pad:-pad]
     
     # Execute -----------------------------------------------------------------
 
+    # Rolling average
+    rstack = rolling_avg(stack, window_size)
+
     # Predict
-    probs = predict(rstack, model_path, img_norm="global", patch_overlap=32)
+    probs = predict(
+        rstack[::25], model_path, img_norm="global", patch_overlap=32)
     
     # Get mask
     mask = np.mean(probs, axis=0) > 0.5
     mask = binary_fill_holes(mask)
-    mask = remove_small_objects(mask, min_size=64)
+    mask = remove_small_objects(mask, min_size=min_size)
     mask = label(mask)
     
     # Get edt
     edt = get_edt(mask)
     
     # Filter stack
-    stack_filt = nan_filt(
+    filt = nan_filt(
         norm_pct(norm_gcn(stack), pct_low=0, pct_high=100), 
         mask=mask > 0, kernel_size=(1, 3, 3), iterations=3,
         )
-               
-    return probs, mask, edt, stack_filt
+                   
+    return probs, mask, edt, filt
     
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
-    
-    rf = 0.1
-    model_path = Path.cwd() / "model" /"model_normal"
-    
+
     for path in data_path.glob(f"*rf-{rf}_stack*"):
         
         t0 = time.time()
         
+        print(path.name)
+        
         stack = io.imread(path)
-        rstack = io.imread(str(path).replace("stack", "rstack"))
-        probs, mask, edt, stack_filt = process(
-            stack, rstack, model_path, min_size=min_size)
+        probs, mask, edt, filt = process(
+            stack, model_path, window_size=window_size, min_size=min_size)
         
         t1 = time.time()
-        print("runtime : {t1 - t0}s")
+        print(f"runtime : {t1 - t0:.3f}s")
         
         # Save
         io.imsave(
@@ -87,7 +103,6 @@ if __name__ == "__main__":
             edt.astype("float32"), check_contrast=False,
             )
         io.imsave(
-            str(path).replace("stack", "stack_filt"),
-            stack_filt.astype("float32"), check_contrast=False,
+            str(path).replace("stack", "filt"),
+            filt.astype("float32"), check_contrast=False,
             )
-

@@ -7,25 +7,27 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed 
 
-# bdtools
-from bdtools.nan import nan_filt
-from bdtools.norm import norm_gcn, norm_pct
-
 # Scipy
 from scipy.signal import correlate
 from scipy.sparse import diags, spdiags
 from scipy.sparse.linalg import spsolve
 
+#%% Comments ------------------------------------------------------------------
+
 #%% Inputs --------------------------------------------------------------------
 
+# Paths
 data_path = Path("D:\local_Ding\data")
+
+# Parameters
+rf = 0.1
 
 #%% Function(s): --------------------------------------------------------------
 
-def analyse(stack, mask):
-        
-    global data, vals, vals_bsub, vals_ccr
+def analyse(stack, mask, filt):
     
+    global data, stack_bsub
+
     # Nested functions --------------------------------------------------------
     
     def als(y, lam=1e7, p=0.001, niter=5):
@@ -41,30 +43,23 @@ def analyse(stack, mask):
   
     def _analyse(val):
         bsub = val - als(val)
-        accr = correlate(bsub, bsub, mode='full')
+        accr = correlate(bsub, bsub, mode="full")
         accr = accr[accr.size // 2:]
         accr /= accr[0] # Zero lag normalization
-        return bsub, accr      
+        return bsub, accr     
+    
+    def _analyse2(val):
+        pass
 
     # Execute -----------------------------------------------------------------  
     
-    data = {
-        "label" : [],
-        "vals" : [],
-        "bsub" : [],
-        "accr" : [],
-        }
-    
-    # Filter stack
-    stack = norm_pct(norm_gcn(stack), pct_low=0, pct_high=100)
-    stack_filt = nan_filt(
-        stack, mask=mask > 0, kernel_size=(1, 3, 3), iterations=3)
-    
+    data = {"label" : [], "vals" : [], "bsub" : [], "accr" : []}
+        
     # Analyse
-    stack_bsub = np.zeros_like(stack_filt)
+    stack_bsub = np.zeros_like(filt)
     for lab in np.unique(mask)[1:]:
         idx = np.where(mask == lab)
-        vals = stack[:, idx[0], idx[1]]
+        vals = filt[:, idx[0], idx[1]]
         outputs = Parallel(n_jobs=-1)(
             delayed(_analyse)(vals[:, i])
             for i in range(vals.shape[1])
@@ -72,47 +67,50 @@ def analyse(stack, mask):
         bsub = np.vstack([data[0] for data in outputs]).T
         accr = np.vstack([data[1] for data in outputs]).T
         stack_bsub[:, idx[0], idx[1]] = bsub
-
+    
         # Append data
         data["label"].append(lab)
         data["vals"].append(vals)
         data["bsub"].append(bsub)
         data["accr"].append(accr)
-    
-    return stack_filt, stack_bsub
+        
+    # 
+    for t in range(stack_bsub.shape[0]):
+        stack_bsub[t, ...][mask == 0] = np.nan
 
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
     
-    rf = 0.1
-    
     for path in data_path.glob(f"*rf-{rf}_stack.tif*"):    
             
-        stack = io.imread(path)
-        mask = io.imread(str(path).replace("stack", "mask"))
-        stack_filt, stack_bsub = analyse(stack, mask)       
+        if path.name == "Exp2_rf-0.1_stack.tif":
         
-        # Save
-        io.imsave(
-            str(path).replace("stack", "stack_filt"),
-            stack_filt.astype("float32"), check_contrast=False,
-            )
-        io.imsave(
-            str(path).replace("stack", "stack_bsub"),
-            stack_bsub.astype("float32"), check_contrast=False,
-            )
-     
-            # # Display
-            # import napari
-            # viewer = napari.Viewer()
-            # viewer.add_image(stack)
-            # viewer.add_image(stack_filt)
-            # viewer.add_image(stack_filt_bsub)
+            t0 = time.time()    
             
+            print(path.name)
+        
+            stack = io.imread(path)
+            mask = io.imread(str(path).replace("stack", "mask"))
+            filt = io.imread(str(path).replace("stack", "filt"))   
+            analyse(stack, mask, filt)
+            
+            t1= time.time()
+            print(f"runtime : {t1 - t0:.3f}")
+            
+            stack_grd = np.gradient(stack_bsub, axis=0)
+            stack_grd = np.roll(stack_grd, 1, axis=0)
+            
+            # Display
+            import napari
+            viewer = napari.Viewer()
+            viewer.add_image(stack)
+            viewer.add_image(stack_bsub)
+            viewer.add_image(stack_grd, contrast_limits=[-0.2, 0.2])
+              
 #%%
 
-# idx = 8
+# idx = 3
 # vals_avg = np.vstack([np.mean(dat, axis=1) for dat in data["vals"]]).T
 # bsub_avg = np.vstack([np.mean(dat, axis=1) for dat in data["bsub"]]).T
 # accr_avg = np.vstack([np.mean(dat, axis=1) for dat in data["accr"]]).T
@@ -175,3 +173,4 @@ if __name__ == "__main__":
 # plt.plot(baseline, label='ALS Baseline')
 # plt.legend()
 # plt.show()
+       
