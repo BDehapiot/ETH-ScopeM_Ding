@@ -10,7 +10,6 @@ from model.model_functions import predict
 
 # bdtools
 from bdtools.nan import nan_filt
-from bdtools.mask import get_edt
 from bdtools.norm import norm_gcn, norm_pct
 
 # Skimage
@@ -61,29 +60,26 @@ def process(stack, model_path, window_size=501, min_size=64):
     mask = remove_small_objects(mask, min_size=min_size)
     mask = label(mask)
     
-    # Get edt
-    edt = get_edt(mask)
-    
     # Filter stack
     filt = nan_filt(
         norm_pct(norm_gcn(stack), pct_low=0, pct_high=100), 
         mask=mask > 0, kernel_size=(1, 3, 3), iterations=3,
         )
                    
-    return probs, mask, edt, filt
+    return probs, mask, filt
     
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
 
     for path in data_path.glob(f"*rf-{rf}_stack*"):
-        
+                
         t0 = time.time()
         
         print(path.name)
         
         stack = io.imread(path)
-        probs, mask, edt, filt = process(
+        probs, mask, filt = process(
             stack, model_path, window_size=window_size, min_size=min_size)
         
         t1 = time.time()
@@ -97,10 +93,6 @@ if __name__ == "__main__":
         io.imsave(
             str(path).replace("stack", "mask"),
             mask.astype("uint8"), check_contrast=False,
-            )
-        io.imsave(
-            str(path).replace("stack", "edt"),
-            edt.astype("float32"), check_contrast=False,
             )
         io.imsave(
             str(path).replace("stack", "filt"),
