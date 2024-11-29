@@ -12,17 +12,6 @@ from joblib import Parallel, delayed
 # Scipy
 from scipy.signal import correlate
 
-#%% Comments ------------------------------------------------------------------
-
-'''
-- The idea is to compute all ddts for an object (all pixel agains all pixel) 
-just one time and then do analysis over time in parallel. Indeed, the ddts will
-be the same for all time points.
-- Another idea would be to compute things on a crop version of arrays, indeed 
-just considering the object. This should maybe improve performances even for 
-the temporal analysis.
-'''
-
 #%% Inputs --------------------------------------------------------------------
 
 # Paths
@@ -77,14 +66,6 @@ def analyse(sub, grd, msk):
 
         return ddt
     
-    def get_ddt_map(msk):
-        ddt = [] 
-        idxs = np.where(msk)
-        print(idxs[0].shape)
-        for coord in zip(idxs[0], idxs[1]):
-            ddt.append(get_ddt(msk, coord))
-        return ddt
-    
     # Auto cross correlation (acc) 
     def get_acc(y):
         acc = correlate(y, y, mode="full")
@@ -108,22 +89,45 @@ def analyse(sub, grd, msk):
                 dist = ddt[idxs]
                 sort = np.argsort(dist)
                 dist = dist[sort]
-
+        
+        
+    
     # Execute -----------------------------------------------------------------
 
-    # 
-    tmp_msk = msk == 3
-    ddt = get_ddt_map(tmp_msk)
+    
+    tmp_msk = msk == 1
+    outputs = Parallel(n_jobs=-1)(
+        delayed(analyse_s)(sub[t,...], grd[t,...], tmp_msk)
+        for t in range(200)
+        # for t in range(sub.shape[0])
+        )
 
-    return ddt
+    # for lab in np.unique(msk)[1:]:
+    #     outputs = Parallel(n_jobs=-1)(
+    #         delayed(analyse_s)(sub[t,...], grd[t,...], msk == lab)
+    #         for t in range(1)
+    #         )
+        
+    # # Get profiles
+    # prf, acc = [], []
+    # for t in range(arr.shape[0]):
+    #     vals = arr[t, ...][idxs][sort]
+    #     distance_grid = np.arange(np.min(dist), np.max(dist) + 1, 1)
+    #     interp_function = interp1d(
+    #         dist, vals, fill_value="extrapolate", assume_sorted=True)
+    #     prf.append(interp_function(distance_grid))
+    #     acc.append(get_acc(interp_function(distance_grid)))
     
 #%% Execute -------------------------------------------------------------------
+
+from scipy.interpolate import interp1d
+from skimage.transform import rescale
 
 if __name__ == "__main__":
     
     for path in data_path.glob(f"*rf-{rf}_stk.tif*"):    
             
-        if path.name == f"Exp2_rf-{rf}_stk.tif":
+        if path.name == f"Exp1_rf-{rf}_stk.tif":
         
             # Open data
             msk = io.imread(str(path).replace("stk", "msk"))
@@ -132,14 +136,38 @@ if __name__ == "__main__":
         
             t0 = time.time()    
             print(path.name)
-                        
-            ddt = analyse(sub, grd, msk)
-            ddt = np.stack(ddt)
+            analyse(sub, grd, msk)
+
+            # idxs = np.where(msk == 2)
+            # test_msk = np.full_like(msk, 0)
+            # for coord in zip(idxs[0], idxs[1]):
+            #     if coord[0] % 4 == 0 and coord[1] % 4 == 0:
+            #         test_msk[coord] = 255
 
             t1= time.time()
             print(f"runtime : {t1 - t0:.5f}")
             
             # Display
-            import napari
-            viewer = napari.Viewer()
-            viewer.add_image(ddt)
+            # import napari
+            # viewer = napari.Viewer()
+            # viewer.add_labels(msk)
+            # viewer.add_labels(test_msk)
+            # viewer.add_image(ddt, colormap="turbo")
+            # viewer.add_image(tmp_mask, colormap="red")
+            # viewer.add_image(tmp_skel, blending="additive")
+            
+#%% 
+
+# def avg_val_dist(arr, idxs, ddt):
+    
+#     dist = ddt[idxs].astype(int)
+#     unique_dist = np.unique(dist)
+#     masks = {d: dist == d for d in unique_dist}
+
+#     vals = []
+#     for t in range(arr.shape[0]):
+#         tmp_vals = arr[t, ...][idxs]
+#         avg_vals = [np.mean(tmp_vals[mask]) for d, mask in masks.items()]
+#         vals.append(avg_vals)
+    
+#     return vals, unique_dist

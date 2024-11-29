@@ -16,7 +16,7 @@ from skimage.transform import rescale
 data_path = Path("D:\local_Ding\data")
 
 # Parameters
-rf = 0.1
+rf = 0.05
 window_size = 501
 
 #%% Function: extract() -------------------------------------------------------
@@ -31,15 +31,15 @@ def extract(path, rf, window_size):
     # Execute -----------------------------------------------------------------
     
     memmap = tifffile.memmap(str(path))
-    stack = Parallel(n_jobs=-1)(
+    stk = Parallel(n_jobs=-1)(
         delayed(_extract)(memmap[t,...], rf)
         for t in range(memmap.shape[0])
         )
-    stack = np.stack(stack)
+    stk = np.stack(stk)
     if path.name == "Exp1.ome":
-        stack = stack[:-1]
+        stk = stk[:-1]
     
-    return stack
+    return stk
 
 #%% Execute -------------------------------------------------------------------
 
@@ -51,13 +51,13 @@ if __name__ == "__main__":
         
         print(path.name)
         
-        stack = extract(path, rf, window_size)
+        stk = extract(path, rf, window_size)
         
         t1 = time.time()
         print(f"runtime : {t1 - t0:.3f}s")
         
         # Save
         io.imsave(
-            data_path / f"{path.stem}_rf-{rf}_stack.tif",
-            stack.astype("float32"), check_contrast=False,
+            data_path / f"{path.stem}_rf-{rf}_stk.tif",
+            stk.astype("float32"), check_contrast=False,
             )   

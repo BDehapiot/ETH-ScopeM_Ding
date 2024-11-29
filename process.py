@@ -26,75 +26,75 @@ data_path = Path("D:\local_Ding\data")
 model_path = Path.cwd() / "model" /"model_normal"
 
 # Parameters
-rf = 0.1
+rf = 0.05
 window_size = 501
-min_size = 256
+min_size = 2560 * rf # 256 for rf = 0.1
 
 #%% Function(s): --------------------------------------------------------------
 
-def process(stack, model_path, window_size=501, min_size=64):
+def process(stk, model_path, window_size=501, min_size=256):
     
     # Nested function(s) --------------------------------------------------------
     
-    def rolling_avg(stack, window_size):
+    def rolling_avg(stk, window_size):
         if window_size % 2 == 0:
             raise ValueError("Window size must be odd.")
         pad = window_size // 2
-        stack = np.pad(
-            stack, ((pad, pad), (0, 0), (0, 0)), mode='reflect')
-        stack = uniform_filter1d(stack, size=window_size, axis=0)
-        return stack[pad:-pad]
+        stk = np.pad(
+            stk, ((pad, pad), (0, 0), (0, 0)), mode='reflect')
+        stk = uniform_filter1d(stk, size=window_size, axis=0)
+        return stk[pad:-pad]
     
     # Execute -----------------------------------------------------------------
 
     # Rolling average
-    rstack = rolling_avg(stack, window_size)
+    rstk = rolling_avg(stk, window_size)
 
     # Predict
-    probs = predict(
-        rstack[::25], model_path, img_norm="global", patch_overlap=32)
+    prb = predict(
+        rstk[::25], model_path, img_norm="global", patch_overlap=32)
     
     # Get mask
-    mask = np.mean(probs, axis=0) > 0.5
-    mask = binary_fill_holes(mask)
-    mask = remove_small_objects(mask, min_size=min_size)
-    mask = label(mask)
+    msk = np.mean(prb, axis=0) > 0.5
+    msk = binary_fill_holes(msk)
+    msk = remove_small_objects(msk, min_size=min_size)
+    msk = label(msk)
     
     # Filter stack
-    filt = nan_filt(
-        norm_pct(norm_gcn(stack), pct_low=0, pct_high=100), 
-        mask=mask > 0, kernel_size=(1, 3, 3), iterations=3,
+    flt = nan_filt(
+        norm_pct(norm_gcn(stk), pct_low=0, pct_high=100), 
+        mask=msk > 0, kernel_size=(1, 3, 3), iterations=1,
         )
                    
-    return probs, mask, filt
+    return prb, msk, flt
     
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
 
-    for path in data_path.glob(f"*rf-{rf}_stack*"):
+    for path in data_path.glob(f"*rf-{rf}_stk*"):
                 
         t0 = time.time()
         
         print(path.name)
         
-        stack = io.imread(path)
-        probs, mask, filt = process(
-            stack, model_path, window_size=window_size, min_size=min_size)
+        stk = io.imread(path)
+        prb, msk, filt = process(
+            stk, model_path, window_size=window_size, min_size=min_size)
         
         t1 = time.time()
         print(f"runtime : {t1 - t0:.3f}s")
         
         # Save
         io.imsave(
-            str(path).replace("stack", "probs"),
-            probs.astype("float32"), check_contrast=False,
+            str(path).replace("stk", "prb"),
+            prb.astype("float32"), check_contrast=False,
             )
         io.imsave(
-            str(path).replace("stack", "mask"),
-            mask.astype("uint8"), check_contrast=False,
+            str(path).replace("stk", "msk"),
+            msk.astype("uint8"), check_contrast=False,
             )
         io.imsave(
-            str(path).replace("stack", "filt"),
+            str(path).replace("stk", "flt"),
             filt.astype("float32"), check_contrast=False,
             )
