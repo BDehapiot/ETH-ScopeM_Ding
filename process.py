@@ -19,6 +19,12 @@ from skimage.morphology import remove_small_objects
 # Scipy
 from scipy.ndimage import binary_fill_holes, uniform_filter1d
 
+#%% Comments ------------------------------------------------------------------
+
+'''
+- subtracted and gradient shoould be processed in process!
+'''
+
 #%% Inputs --------------------------------------------------------------------
 
 # Paths

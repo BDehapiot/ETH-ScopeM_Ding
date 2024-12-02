@@ -14,6 +14,10 @@ from scipy.sparse.linalg import spsolve
 
 #%% Comments ------------------------------------------------------------------
 
+'''
+- subtracted and gradient shoould be processed in process!
+'''
+
 #%% Inputs --------------------------------------------------------------------
 
 # Paths
