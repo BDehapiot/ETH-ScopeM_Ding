@@ -1,6 +1,7 @@
 #%% Imports -------------------------------------------------------------------
 
 import time
+import heapq
 import numpy as np
 from skimage import io
 from pathlib import Path
@@ -13,10 +14,6 @@ from scipy.sparse import diags, spdiags
 from scipy.sparse.linalg import spsolve
 
 #%% Comments ------------------------------------------------------------------
-
-'''
-- subtracted and gradient shoould be processed in process!
-'''
 
 '''
 1-300s - 2mM Glucose,
@@ -32,176 +29,164 @@ data_path = Path("D:\local_Ding\data")
 
 # Parameters
 rf = 0.05
+interval = 4
 
 #%% Function(s): --------------------------------------------------------------
 
-def analyse(flt, msk):
+# Dijkstra distance transform (ddts)  
+def analyse(msk, sub, grd, interval=4):
+    
+    global data, rmsk, sub_tvals, grd_tvals, sub_tvals_acc, grd_tvals_acc
     
     # Nested functions --------------------------------------------------------
+      
+    # Reduce mask
+    def reduce_msk(msk, interval):
+        ys, xs = [], []
+        idxs = np.where(msk)
+        for y, x in zip(idxs[0], idxs[1]):
+            if y % interval == 0 and x % interval == 0:
+                ys.append(y)
+                xs.append(x)
+        ridxs = (ys, xs)
+        rmsk = np.zeros_like(msk)
+        rmsk[ridxs] = msk[ridxs]
+        return rmsk
     
-    # Asymetric least square (asl) 
-    def get_als(y, lam=1e7, p=0.001, niter=5):
-        L = len(y)
-        D = diags([1, -2, 1],[0, -1, -2], shape=(L, L - 2))
-        w = np.ones(L)
-        for i in range(niter):
-            W = spdiags(w, 0, L, L)
-            Z = W + lam * D.dot(D.transpose())
-            z = spsolve(Z, w * y)
-            w = p * (y > z) + (1 - p) * (y < z)
-        return z
-  
     # Auto cross correlation (acc) 
     def get_acc(y):
-        acc = correlate(y, y, mode="full")
+        acc = np.correlate(y, y, mode="same")
         acc = acc[acc.size // 2:]
-        acc /= acc[0] # Zero lag normalization        
+        acc /= acc[0] # zero lag normalization        
         return acc
     
-    def analyse_t(y):
-        sub = y - get_als(y)
-        grd = np.gradient(sub, axis=0)
-        grd = np.roll(grd, 1, axis=0)
-        acc = get_acc(sub)
-        return sub, grd, acc
+    # Dijkstra distance transforms (ddts)  
+    def get_ddts(msk, coord):
 
+        # Define offsets
+        s2 = 1.4142135623730951
+        neighbor_offsets = [
+            (-1, -1, s2), (-1, 0, 1), (-1, 1, s2),
+            (0, -1, 1  ),             (0, 1, 1  ),
+            (1, -1, s2 ), (1, 0, 1 ), ( 1, 1, s2),
+            ]
+
+        # Initialize
+        cr, cc = coord
+        nY, nX = msk.shape
+        visited = np.zeros_like(msk, dtype=bool)
+        ddts = np.full_like(msk, np.inf, dtype=float)
+        ddts[cr, cc] = 0.0
+        
+        # Process
+        heap = []
+        heapq.heappush(heap, (0.0, (cr, cc)))
+        while heap:
+            current_dist, (r, c) = heapq.heappop(heap)
+            if visited[r, c]:
+                continue
+            visited[r, c] = True
+            for dr, dc, cost in neighbor_offsets:
+                nr, nc = r + dr, c + dc
+                if (0 <= nr < nY and 0 <= nc < nX and
+                        not visited[nr, nc] and msk[nr, nc] == 1):
+                    new_dist = current_dist + cost
+                    if new_dist < ddts[nr, nc]:
+                        ddts[nr, nc] = new_dist
+                        heapq.heappush(heap, (new_dist, (nr, nc)))
+
+        # Replace infinite distances
+        ddts[np.isinf(ddts)] = np.nan
+
+        return ddts
+    
+    # Interpolated intensity profiles (iips)
+    def interpolate_svals(svals):
+        iips = []
+        svals = [svals[sort] for sort in sorts]
+        for sval, dist, xval in zip(svals, dists, xvals):
+            iips.append(np.interp(xval, dist, sval))
+        return iips
+    
     # Execute -----------------------------------------------------------------  
+       
+    data = []
+    nT = sub.shape[0]
+    rmsk = reduce_msk(msk, interval)    
     
-    data = {
-        "label"    : [], 
-        "tInt"     : [], 
-        "tInt_sub" : [], 
-        "tInt_grd" : [], 
-        "tInt_acc" : [],
-        }
+    for lab in np.unique(rmsk)[1:]:
         
-    # Temporal analysis
-    sub = np.full_like(flt, np.nan)
-    grd = np.full_like(flt, np.nan)
-    for lab in np.unique(msk)[1:]:
-        idxs = np.where(msk == lab)
-        tInt = flt[:, idxs[0], idxs[1]]
-        outputs = Parallel(n_jobs=-1)(
-            delayed(analyse_t)(tInt[:, i])
-            for i in range(tInt.shape[1])
+        ridxs = np.where(rmsk == lab)
+        
+        # Temporal analysis
+        sub_tvals = list(sub[:, ridxs[0], ridxs[1]].T)
+        grd_tvals = list(grd[:, ridxs[0], ridxs[1]].T)
+        sub_tvals_acc = [get_acc(tval) for tval in sub_tvals] 
+        grd_tvals_acc = [get_acc(tval) for tval in grd_tvals]  
+        sub_tvals_acc_avg = np.mean(sub_tvals_acc, axis=0)
+        grd_tvals_acc_avg = np.mean(grd_tvals_acc, axis=0)
+        
+        # Spatial analysis
+        ddts = Parallel(n_jobs=-1)(
+            delayed(get_ddts)(msk == lab, (y, x))
+            for y, x in zip(ridxs[0], ridxs[1])
             )
-        tInt_sub = np.vstack([data[0] for data in outputs]).T
-        tInt_grd = np.vstack([data[1] for data in outputs]).T
-        tInt_acc = np.vstack([data[2] for data in outputs]).T
-        sub[:, idxs[0], idxs[1]] = tInt_sub
-        grd[:, idxs[0], idxs[1]] = tInt_grd
-    
+        dists = [ddt[ridxs] for ddt in ddts]
+        sorts = [np.argsort(dist) for dist in dists]  
+        dists = [dist[sort] for (dist, sort) in zip(dists, sorts)]
+        xvals = [np.arange(0, int(np.max(dist)), 1) for dist in dists]
+        
+        iips = []   
+        for t in range(arr.shape[0]):
+            iip, acc = get_iip(arr[t, ...][idxs])
+            iips.append(iip)
+            accs.append(acc)
+        
         # Append data
-        data["label"].append(lab)
-        data["tInt"].append(tInt)
-        data["tInt_sub"].append(tInt_sub)
-        data["tInt_grd"].append(tInt_grd)
-        data["tInt_acc"].append(tInt_acc)
+        data.append({
+            "label" : lab, "nT" : nT, "nP" : len(ridxs[0]),
+            
+            # Temporal
+            "sub_tvals"         : sub_tvals,
+            "grd_tvals"         : grd_tvals,
+            "sub_tvals_acc"     : sub_tvals_acc,
+            "grd_tvals_acc"     : grd_tvals_acc,
+            "sub_tvals_acc_avg" : sub_tvals_acc_avg,
+            "grd_tvals_acc_avg" : grd_tvals_acc_avg,
+            
+            # Spatial
+            "ddts" : ddts,
+            
+            })
         
-    # Spatial analysis
-        
-    return data, sub, grd
-
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
     
     for path in data_path.glob(f"*rf-{rf}_stk.tif*"):  
         
-        # if path.name == f"Exp2_rf-{rf}_stk.tif":
+        if path.name == f"Exp2_rf-{rf}_stk.tif":
                     
-        t0 = time.time()    
-        
-        print(path.name)
+            msk = io.imread(str(path).replace("stk", "msk"))
+            sub = io.imread(str(path).replace("stk", "sub")) 
+            grd = io.imread(str(path).replace("stk", "grd"))
 
-        msk = io.imread(str(path).replace("stk", "msk"))
-        flt = io.imread(str(path).replace("stk", "flt"))   
-        data, sub, grd = analyse(flt, msk)
-        
-        t1= time.time()
-        print(f"runtime : {t1 - t0:.3f}")
-        
-        # Save
-        io.imsave(
-            str(path).replace("stk", "sub"),
-            sub.astype("float32"), check_contrast=False,
-            )
-        io.imsave(
-            str(path).replace("stk", "grd"),
-            grd.astype("float32"), check_contrast=False,
-            )
-        
-        # # Display
-        # import napari
-        # viewer = napari.Viewer()
-        # viewer.add_image(stk)
-        # viewer.add_image(sub)
-        # viewer.add_image(
-        #     grd, contrast_limits=[-0.2, 0.2], colormap="twilight")
-              
+            t0 = time.time()    
+            print(path.name)
+            
+            analyse(msk, sub, grd, interval=interval)
+            
+            t1= time.time()
+            print(f"runtime : {t1 - t0:.3f}")
+            
+            # # Display
+            # import napari 
+            # viewer = napari.Viewer()
+            # viewer.add_labels(rmsk)
+            
 #%%
 
-# idx = 5
-# val_avg = np.vstack([np.mean(dat, axis=1) for dat in data["tInt"]]).T
-# sub_avg = np.vstack([np.mean(dat, axis=1) for dat in data["tInt_sub"]]).T
-# acc_avg = np.vstack([np.mean(dat, axis=1) for dat in data["tInt_acc"]]).T
-
-# # Plot
-# plt.figure(figsize=(10, 12))
-
-# # vals_avg
-# plt.subplot(3, 1, 1)
-# plt.plot(val_avg[:, idx], label="Raw Values (val_avg)")
-# plt.plot(val_avg[:, idx] - sub_avg[:, idx], label="val_avg - sub_avg", linestyle='--')
-# plt.title("Raw Values Data")
-# plt.legend()
-# plt.xlabel("Time/Index")
-# plt.ylabel("Amplitude")
-
-# # sub_avg
-# plt.subplot(3, 1, 2)
-# plt.plot(sub_avg[:, idx], label="Baseline Subtracted (sub_avg)")
-# plt.title("Baseline Subtracted Data")
-# plt.legend()
-# plt.xlabel("Time/Index")
-# plt.ylabel("Amplitude")
-
-# # accr_avg
-# plt.subplot(3, 1, 3)
-# plt.plot(acc_avg[:, idx], label="Autocorrelation (acc_avg)")
-# plt.title("Autocorrelation")
-# plt.legend()
-# plt.xlabel("Lag")
-# plt.ylabel("Correlation")
-
-# plt.tight_layout()
-# plt.show()
-           
-#%%
-
-# def als(y, lam=1e7, p=0.001, niter=5):
-#   L = len(y)
-#   D = diags([1,-2,1],[0,-1,-2], shape=(L,L-2))
-#   w = np.ones(L)
-#   for i in range(niter):
-#     W = spdiags(w, 0, L, L)
-#     Z = W + lam * D.dot(D.transpose())
-#     z = spsolve(Z, w*y)
-#     w = p * (y > z) + (1-p) * (y < z)
-#   return z
-
-# lam = 1e7 # Smoothness parameter
-# p = 0.001 # Asymmetry parameter
-# val = vals[:, 50]
-
-# t0 = time.time()
-# baseline = als(val, lam, p)
-# t1 = time.time()
-# print(f"als() : {t1 - t0:.5f}")
-
-# plt.figure(figsize=(10, 6))
-# plt.plot(val, label='Signal')
-# plt.plot(baseline, label='ALS Baseline')
-# plt.legend()
-# plt.show()
-       
+# lab = 2
+# p = np.random.randint(0, data[lab]["nP"])
+# plt.plot(data[lab]["sub_tvals"][p])
+# plt.plot(data[lab]["grd_tvals"][p])

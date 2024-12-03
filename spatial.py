@@ -138,17 +138,21 @@ arr = grd
 # -----------------------------------------------------------------------------
 
 def get_acc(y):
-    acc = np.correlate(y, y, mode="same")
+    acc = np.correlate(y, y, mode="full")
     acc = acc[acc.size // 2:]
     acc /= acc[0] # Zero lag normalization        
     return acc
 
-def get_iip(vals):
+def get_iip(vals, min_int=0.02):
     iip, acc = [], []
     vals = [vals[sort] for sort in sorts]
     for val, dist, xval in zip(vals, dists, xvals):
-        tmp_iip = np.interp(xval, dist, val)
-        tmp_acc = get_acc(tmp_iip)
+        if val[0] > min_int:
+            tmp_iip = np.interp(xval, dist, val)
+            tmp_acc = get_acc(tmp_iip)
+        else:
+            tmp_iip = np.full(xval[-1] + 1, np.nan)
+            tmp_acc = np.full((xval[-1] + 1) , np.nan)
         iip.append(tmp_iip)
         acc.append(tmp_acc)
     return iip, acc
@@ -177,7 +181,7 @@ t0 = time.time()
 # for val, dist, xval in zip(vals, dists, xvals):
 #     iip.append(np.interp(xval, dist, val))
     
-iips, accs = [], []    
+iips, accs = [], []   
 for t in range(arr.shape[0]):
     iip, acc = get_iip(arr[t, ...][idxs])
     iips.append(iip)
@@ -195,11 +199,11 @@ print(f"runtime #2: {t1 - t0:.5f}")
 
 iips_avg, accs_avg = [], []
 for iip, acc in zip(iips, accs):
-    iips_avg.append(np.mean(np.stack(iip), axis=0))
-    accs_avg.append(np.mean(np.stack(acc), axis=0))
+    iips_avg.append(np.nanmean(np.stack(iip), axis=0))
+    accs_avg.append(np.nanmean(np.stack(acc), axis=0))
 iips_avg = np.stack(iips_avg)
 accs_avg = np.stack(accs_avg)
-accs_avg_avg = np.mean(accs_avg, axis=0)
+accs_avg_avg = np.nanmean(accs_avg, axis=0)
 
 plt.plot(accs_avg_avg)
 

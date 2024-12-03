@@ -4,24 +4,26 @@ import time
 import numpy as np
 from skimage import io
 from pathlib import Path
-from joblib import Parallel, delayed 
 
 # Functions
 from model.model_functions import predict
 
 # bdtools
 from bdtools.nan import nan_filt
+from bdtools.norm import norm_gcn, norm_pct
 
 # Skimage
 from skimage.measure import label
 from skimage.morphology import remove_small_objects
 
 # Scipy
-from scipy.sparse import diags, spdiags
-from scipy.sparse.linalg import spsolve
 from scipy.ndimage import binary_fill_holes, uniform_filter1d
 
 #%% Comments ------------------------------------------------------------------
+
+'''
+- subtracted and gradient shoould be processed in process!
+'''
 
 #%% Inputs --------------------------------------------------------------------
 
@@ -49,24 +51,6 @@ def process(stk, model_path, window_size=501, min_size=256):
         stk = uniform_filter1d(stk, size=window_size, axis=0)
         return stk[pad:-pad]
     
-    # Asymetric least square (asl) 
-    def get_als(y, lam=1e7, p=0.001, niter=5): # Parameters
-        L = len(y)
-        D = diags([1, -2, 1],[0, -1, -2], shape=(L, L - 2))
-        w = np.ones(L)
-        for i in range(niter):
-            W = spdiags(w, 0, L, L)
-            Z = W + lam * D.dot(D.transpose())
-            z = spsolve(Z, w * y)
-            w = p * (y > z) + (1 - p) * (y < z)
-        return z
-    
-    def _process(y):
-        sub = y - get_als(y)
-        grd = np.gradient(sub, axis=0)
-        grd = np.roll(grd, 1, axis=0)
-        return sub, grd
-    
     # Execute -----------------------------------------------------------------
 
     # Rolling average
@@ -83,24 +67,12 @@ def process(stk, model_path, window_size=501, min_size=256):
     msk = label(msk)
     
     # Filter stack
-    flt = nan_filt(stk, mask=msk > 0, kernel_size=(1, 3, 3), iterations=3)
-    
-    # Temporal analysis
-    sub = np.full_like(flt, np.nan)
-    grd = np.full_like(flt, np.nan)
-    for lab in np.unique(msk)[1:]:
-        idxs = np.where(msk == lab)
-        flt_tvals = flt[:, idxs[0], idxs[1]]
-        outputs = Parallel(n_jobs=-1)(
-            delayed(_process)(flt_tvals[:, i])
-            for i in range(flt_tvals.shape[1])
-            )
-        sub_tvals = np.vstack([data[0] for data in outputs]).T
-        grd_tvals = np.vstack([data[1] for data in outputs]).T
-        sub[:, idxs[0], idxs[1]] = sub_tvals
-        grd[:, idxs[0], idxs[1]] = grd_tvals
+    flt = nan_filt(
+        norm_pct(norm_gcn(stk), pct_low=0, pct_high=100), 
+        mask=msk > 0, kernel_size=(1, 3, 3), iterations=1,
+        )
                    
-    return prb, msk, flt, sub, grd
+    return prb, msk, flt
     
 #%% Execute -------------------------------------------------------------------
 
@@ -113,7 +85,7 @@ if __name__ == "__main__":
         print(path.name)
         
         stk = io.imread(path)
-        prb, msk, filt, sub, grd = process(
+        prb, msk, filt = process(
             stk, model_path, window_size=window_size, min_size=min_size)
         
         t1 = time.time()
@@ -131,12 +103,4 @@ if __name__ == "__main__":
         io.imsave(
             str(path).replace("stk", "flt"),
             filt.astype("float32"), check_contrast=False,
-            )
-        io.imsave(
-            str(path).replace("stk", "sub"),
-            sub.astype("float32"), check_contrast=False,
-            )
-        io.imsave(
-            str(path).replace("stk", "grd"),
-            grd.astype("float32"), check_contrast=False,
             )
