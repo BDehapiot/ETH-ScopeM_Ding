@@ -18,6 +18,13 @@ from scipy.sparse.linalg import spsolve
 - subtracted and gradient shoould be processed in process!
 '''
 
+'''
+1-300s - 2mM Glucose,
+301-900 - 20mM Glucose,
+901-1800 - 20mM Glucose
+1801-2700 - 20mM Glucose + 100uM Mefloquine
+'''
+
 #%% Inputs --------------------------------------------------------------------
 
 # Paths

@@ -11,7 +11,6 @@ from joblib import Parallel, delayed, Memory
 
 # Scipy
 from scipy.signal import correlate
-from scipy.interpolate import interp1d
 
 #%% Comments ------------------------------------------------------------------
 
@@ -39,7 +38,7 @@ def get_smsk(msk, interval):
     ys, xs = [], []
     idxs = np.where(msk)
     for y, x in zip(idxs[0], idxs[1]):
-        if y % 4 == 0 and x % 4 == 0:
+        if y % interval == 0 and x % interval == 0:
             ys.append(y)
             xs.append(x)
     sidxs = (ys, xs)
@@ -132,85 +131,27 @@ for path in data_path.glob(f"*rf-{rf}_stk.tif*"):
 
 #%%
 
-# t = 0
-# lab = 2
-# arr = sub
-
-# # -----------------------------------------------------------------------------
-
-# def get_iip(vals):
-#     iips = []
-#     vals = [vals[sort] for sort in sorts]
-#     for val, dist, xval in zip(vals, dists, xvals):
-#         f = interp1d(dist, val, fill_value="extrapolate", assume_sorted=True)
-#         iips.append(f(xval))
-#     return iips
-
-# # -----------------------------------------------------------------------------
-
-# # For all labels
-# t0 = time.time()  
-
-# idxs = np.where(smsk == lab)
-# dists = [ddt[idxs] for ddt in ddts[lab - 1]]
-# sorts = [np.argsort(dist) for dist in dists]  
-# dists = [dist[sort] for (dist, sort) in zip(dists, sorts)]
-# xvals = [np.arange(0, int(np.max(dist)), 1) for dist in dists]
-
-# t1= time.time()
-# print(f"runtime #1: {t1 - t0:.5f}") 
-
-# # For all timepoints
-# t0 = time.time()  
-
-# # iips = []
-# # vals = arr[t, ...][idxs]
-# # vals = [vals[sort] for sort in sorts]
-# # for val, dist, xval in zip(vals, dists, xvals):
-# #     f = interp1d(dist, val, fill_value="extrapolate", assume_sorted=True)
-# #     iips.append(f(xval))
-    
-# # for t in range(arr.shape[0]):
-# #     iips = []
-# #     vals = arr[t, ...][idxs]
-# #     vals = [vals[sort] for sort in sorts]
-# #     for val, dist, xval in zip(vals, dists, xvals):
-# #         f = interp1d(dist, val, fill_value="extrapolate", assume_sorted=True)
-# #         iips.append(f(xval))
-    
-# # for t in range(arr.shape[0]):
-# #     iips = get_iip(arr[t, ...][idxs])
-
-# outputs = Parallel(n_jobs=-1)(
-#     delayed(get_iip)(arr[t, ...][idxs])
-#     for t in range(arr.shape[0])
-#     )
-
-# t1= time.time()
-# print(f"runtime #2: {t1 - t0:.5f}") 
-
-#%%
-
 t = 0
-lab = 2
-arr = sub
+lab = 5
+arr = grd
 
 # -----------------------------------------------------------------------------
 
-# def get_iip(vals):
-#     iips = []
-#     vals = [vals[sort] for sort in sorts]
-#     for val, dist, xval in zip(vals, dists, xvals):
-#         f = interp1d(dist, val, fill_value="extrapolate", assume_sorted=True)
-#         iips.append(f(xval))
-#     return iips
+def get_acc(y):
+    acc = np.correlate(y, y, mode="same")
+    acc = acc[acc.size // 2:]
+    acc /= acc[0] # Zero lag normalization        
+    return acc
 
 def get_iip(vals):
-    iips = []
+    iip, acc = [], []
     vals = [vals[sort] for sort in sorts]
     for val, dist, xval in zip(vals, dists, xvals):
-        iips.append(np.interp(xval, dist, val))
-    return iips
+        tmp_iip = np.interp(xval, dist, val)
+        tmp_acc = get_acc(tmp_iip)
+        iip.append(tmp_iip)
+        acc.append(tmp_acc)
+    return iip, acc
 
 # -----------------------------------------------------------------------------
 
@@ -221,7 +162,8 @@ idxs = np.where(smsk == lab)
 dists = [ddt[idxs] for ddt in ddts[lab - 1]]
 sorts = [np.argsort(dist) for dist in dists]  
 dists = [dist[sort] for (dist, sort) in zip(dists, sorts)]
-xvals = [np.arange(0, int(np.max(dist)), 1) for dist in dists]
+# xvals = [np.arange(0, int(np.max(dist)), 1) for dist in dists]
+xvals = [np.arange(0, 80, 1) for dist in dists]
 
 t1= time.time()
 print(f"runtime #1: {t1 - t0:.5f}") 
@@ -229,23 +171,17 @@ print(f"runtime #1: {t1 - t0:.5f}")
 # For all timepoints
 t0 = time.time()  
 
-# iips = []
+# iip = []
 # vals = arr[t, ...][idxs]
 # vals = [vals[sort] for sort in sorts]
 # for val, dist, xval in zip(vals, dists, xvals):
-#     f = interp1d(dist, val, fill_value="extrapolate", assume_sorted=True)
-#     iips.append(f(xval))
+#     iip.append(np.interp(xval, dist, val))
     
-# for t in range(arr.shape[0]):
-#     iips = []
-#     vals = arr[t, ...][idxs]
-#     vals = [vals[sort] for sort in sorts]
-#     for val, dist, xval in zip(vals, dists, xvals):
-#         f = interp1d(dist, val, fill_value="extrapolate", assume_sorted=True)
-#         iips.append(f(xval))
-    
-# for t in range(arr.shape[0]):
-#     iips = get_iip(arr[t, ...][idxs])
+iips, accs = [], []    
+for t in range(arr.shape[0]):
+    iip, acc = get_iip(arr[t, ...][idxs])
+    iips.append(iip)
+    accs.append(acc)
 
 # outputs = Parallel(n_jobs=-1)(
 #     delayed(get_iip)(arr[t, ...][idxs])
@@ -254,3 +190,18 @@ t0 = time.time()
 
 t1= time.time()
 print(f"runtime #2: {t1 - t0:.5f}") 
+
+#%%
+
+iips_avg, accs_avg = [], []
+for iip, acc in zip(iips, accs):
+    iips_avg.append(np.mean(np.stack(iip), axis=0))
+    accs_avg.append(np.mean(np.stack(acc), axis=0))
+iips_avg = np.stack(iips_avg)
+accs_avg = np.stack(accs_avg)
+accs_avg_avg = np.mean(accs_avg, axis=0)
+
+plt.plot(accs_avg_avg)
+
+# plt.figure(figsize=(6, 6))
+# plt.imshow(accs_avg, cmap='viridis', interpolation='nearest', aspect='auto')
