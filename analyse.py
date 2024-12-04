@@ -8,11 +8,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed 
 
-# Scipy
-from scipy.signal import correlate
-from scipy.sparse import diags, spdiags
-from scipy.sparse.linalg import spsolve
-
 #%% Comments ------------------------------------------------------------------
 
 '''
@@ -36,7 +31,7 @@ interval = 4
 # Dijkstra distance transform (ddts)  
 def analyse(msk, sub, grd, interval=4):
     
-    global data, rmsk, sub_tvals, grd_tvals, sub_tvals_acc, grd_tvals_acc
+    global data
     
     # Nested functions --------------------------------------------------------
       
@@ -54,8 +49,8 @@ def analyse(msk, sub, grd, interval=4):
         return rmsk
     
     # Auto cross correlation (acc) 
-    def get_acc(y):
-        acc = np.correlate(y, y, mode="same")
+    def get_acc(y, mode="same"):
+        acc = np.correlate(y, y, mode=mode)
         acc = acc[acc.size // 2:]
         acc /= acc[0] # zero lag normalization        
         return acc
@@ -101,17 +96,19 @@ def analyse(msk, sub, grd, interval=4):
         return ddts
     
     # Interpolated intensity profiles (iips)
-    def interpolate_svals(svals):
-        iips = []
-        svals = [svals[sort] for sort in sorts]
-        for sval, dist, xval in zip(svals, dists, xvals):
-            iips.append(np.interp(xval, dist, sval))
-        return iips
+    def process_svals(vals, sorts):
+        svals, svals_acc = [], []
+        vals = [vals[sort] for sort in sorts]
+        for val, dist, xval in zip(vals, dists, xvals):
+            sval = np.interp(xval, dist, val)
+            sval_acc = get_acc(sval)
+            svals.append(sval)
+            svals_acc.append(sval_acc)
+        return svals, svals_acc
     
     # Execute -----------------------------------------------------------------  
        
     data = []
-    nT = sub.shape[0]
     rmsk = reduce_msk(msk, interval)    
     
     for lab in np.unique(rmsk)[1:]:
@@ -123,8 +120,6 @@ def analyse(msk, sub, grd, interval=4):
         grd_tvals = list(grd[:, ridxs[0], ridxs[1]].T)
         sub_tvals_acc = [get_acc(tval) for tval in sub_tvals] 
         grd_tvals_acc = [get_acc(tval) for tval in grd_tvals]  
-        sub_tvals_acc_avg = np.mean(sub_tvals_acc, axis=0)
-        grd_tvals_acc_avg = np.mean(grd_tvals_acc, axis=0)
         
         # Spatial analysis
         ddts = Parallel(n_jobs=-1)(
@@ -136,26 +131,38 @@ def analyse(msk, sub, grd, interval=4):
         dists = [dist[sort] for (dist, sort) in zip(dists, sorts)]
         xvals = [np.arange(0, int(np.max(dist)), 1) for dist in dists]
         
-        iips = []   
-        for t in range(arr.shape[0]):
-            iip, acc = get_iip(arr[t, ...][idxs])
-            iips.append(iip)
-            accs.append(acc)
+        sub_svals, grd_svals = [], []  
+        sub_svals_acc, grd_svals_acc = [], [] 
+        for t in range(sub.shape[0]):
+            svals, svals_acc = process_svals(sub[t, ...][ridxs], sorts)
+            sub_svals.append(svals)
+            sub_svals_acc.append(svals_acc)
+            svals, svals_acc = process_svals(grd[t, ...][ridxs], sorts)
+            grd_svals.append(svals)
+            grd_svals_acc.append(svals_acc)
         
         # Append data
         data.append({
-            "label" : lab, "nT" : nT, "nP" : len(ridxs[0]),
+            
+            "label" : lab, 
+            "ridxs" : ridxs,
+            "nT"    : sub.shape[0], 
+            "nP"    : len(ridxs[0]),
             
             # Temporal
-            "sub_tvals"         : sub_tvals,
-            "grd_tvals"         : grd_tvals,
-            "sub_tvals_acc"     : sub_tvals_acc,
-            "grd_tvals_acc"     : grd_tvals_acc,
-            "sub_tvals_acc_avg" : sub_tvals_acc_avg,
-            "grd_tvals_acc_avg" : grd_tvals_acc_avg,
+            "sub_tvals"     : sub_tvals,
+            "grd_tvals"     : grd_tvals,
+            "sub_tvals_acc" : sub_tvals_acc,
+            "grd_tvals_acc" : grd_tvals_acc,
             
             # Spatial
-            "ddts" : ddts,
+            "ddts"          : ddts,
+            "dists"         : dists,
+            "sorts"         : sorts,
+            "sub_svals"     : sub_svals,
+            "grd_svals"     : grd_svals,
+            "sub_svals_acc" : sub_svals_acc,
+            "grd_svals_acc" : grd_svals_acc,
             
             })
         
@@ -186,7 +193,67 @@ if __name__ == "__main__":
             
 #%%
 
-# lab = 2
-# p = np.random.randint(0, data[lab]["nP"])
-# plt.plot(data[lab]["sub_tvals"][p])
-# plt.plot(data[lab]["grd_tvals"][p])
+lab = 4
+t0, t1 = 300, 1800
+sub_tresh = 1.0
+grd_tresh = 0.1
+
+def match_length(vals):
+    matched_vals = vals.copy()
+    max_dist = np.max([len(val) for val in vals])
+    for i, val in enumerate(vals):
+        tmp_nan = np.full((max_dist - val.shape[0]), np.nan)
+        matched_vals[i] = np.hstack((val, tmp_nan))
+    return matched_vals
+
+sub_svals_acc_pavg = []
+grd_svals_acc_pavg = []
+for t in range(data[lab]["nT"]):
+    
+    sub_valid = sub[t, ...][data[lab]["ridxs"]] > sub_tresh
+    grd_valid = grd[t, ...][data[lab]["ridxs"]] > grd_tresh
+
+    sub_svals_acc_pavg.append(np.nanmean(
+        np.stack(match_length(data[lab]["sub_svals_acc"][t]))[sub_valid], axis=0))
+    grd_svals_acc_pavg.append(np.nanmean(
+        np.stack(match_length(data[lab]["grd_svals_acc"][t]))[grd_valid], axis=0))
+    
+# -----------------------------------------------------------------------------    
+    
+sub_svals_acc_pavg_t0avg = np.nanmean(
+    np.stack(sub_svals_acc_pavg[t0:t1]), axis=0)
+grd_svals_acc_pavg_t0avg = np.nanmean(
+    np.stack(grd_svals_acc_pavg[t0:t1]), axis=0)
+sub_svals_acc_pavg_t1avg = np.nanmean(
+    np.stack(sub_svals_acc_pavg[t1:-1]), axis=0)
+grd_svals_acc_pavg_t1avg = np.nanmean(
+    np.stack(grd_svals_acc_pavg[t1:-1]), axis=0)
+
+# -----------------------------------------------------------------------------
+
+plt.figure(figsize=(12, 12))
+
+plt.subplot(2, 1, 1)
+plt.plot(sub_svals_acc_pavg_t0avg)
+plt.plot(sub_svals_acc_pavg_t1avg)
+
+plt.subplot(2, 1, 2)
+plt.plot(grd_svals_acc_pavg_t0avg)
+plt.plot(grd_svals_acc_pavg_t1avg)
+
+#%%
+
+# sub_svals_acc_tavg = []
+# grd_svals_acc_tavg = []
+# for p in range(data[lab]["nP"]):
+#     sub_svals_acc_tavg.append(np.nanmean(
+#         np.stack([data[lab]["sub_svals_acc"][t][p] 
+#                   for t in range(data[lab]["nT"])]), axis=0))
+#     grd_svals_acc_tavg.append(np.nanmean(
+#         np.stack([data[lab]["grd_svals_acc"][t][p] 
+#                   for t in range(data[lab]["nT"])]), axis=0))
+# sub_svals_acc_tavg = match_length(sub_svals_acc_tavg)
+# grd_svals_acc_tavg = match_length(grd_svals_acc_tavg)
+
+# sub_svals_acc_tavg_pavg = np.nanmean(np.stack(sub_svals_acc_tavg), axis=0)
+# grd_svals_acc_tavg_pavg = np.nanmean(np.stack(grd_svals_acc_tavg), axis=0)
