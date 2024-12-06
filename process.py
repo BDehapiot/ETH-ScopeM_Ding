@@ -30,7 +30,7 @@ data_path = Path("D:\local_Ding\data")
 model_path = Path.cwd() / "model" /"model_normal"
 
 # Parameters
-rf = 0.05
+rf = 0.1
 window_size = 501
 min_size = 2560 * rf # 256 for rf = 0.1
 

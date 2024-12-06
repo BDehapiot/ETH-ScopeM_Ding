@@ -1,259 +1,330 @@
 #%% Imports -------------------------------------------------------------------
 
 import time
-import heapq
+import napari
 import numpy as np
 from skimage import io
 from pathlib import Path
 import matplotlib.pyplot as plt
-from joblib import Parallel, delayed 
+
+# Functions
+from functions import match_list
+
+# Skimage
+from skimage.measure import label
+from skimage.morphology import binary_dilation, remove_small_objects
 
 #%% Comments ------------------------------------------------------------------
 
 '''
-1-300s - 2mM Glucose,
-301-900 - 20mM Glucose,
-901-1800 - 20mM Glucose
-1801-2700 - 20mM Glucose + 100uM Mefloquine
+# Experiment timepoints
+1-300s     - 2mM Glucose,
+301-900s   - 20mM Glucose,
+901-1800s  - 20mM Glucose,
+1801-2700s - 20mM Glucose + 100uM Mefloquine,
 '''
 
 #%% Inputs --------------------------------------------------------------------
 
-# Paths
-data_path = Path("D:\local_Ding\data")
-
 # Parameters
 rf = 0.05
-interval = 4
+thresh = 0.2
+min_size = 320 * rf # 32 for rf = 0.1
+tps = [0, 300, 900, 2000, 2700] # Experiment timepoints
 
-#%% Function(s): --------------------------------------------------------------
+# Paths
+data_path = Path("D:\local_Ding\data")
+img_paths = list(data_path.glob(f"*rf-{rf}_stk.tif*"))
+path_idx = "all"
 
-# Dijkstra distance transform (ddts)  
-def analyse(msk, sub, grd, interval=4):
-    
-    global data
-    
-    # Nested functions --------------------------------------------------------
-      
-    # Reduce mask
-    def reduce_msk(msk, interval):
-        ys, xs = [], []
-        idxs = np.where(msk)
-        for y, x in zip(idxs[0], idxs[1]):
-            if y % interval == 0 and x % interval == 0:
-                ys.append(y)
-                xs.append(x)
-        ridxs = (ys, xs)
-        rmsk = np.zeros_like(msk)
-        rmsk[ridxs] = msk[ridxs]
-        return rmsk
-    
-    # Auto cross correlation (acc) 
-    def get_acc(y, mode="same"):
-        acc = np.correlate(y, y, mode=mode)
-        acc = acc[acc.size // 2:]
-        acc /= acc[0] # zero lag normalization        
-        return acc
-    
-    # Dijkstra distance transforms (ddts)  
-    def get_ddts(msk, coord):
+if isinstance(path_idx, int):
+    img_paths = [img_paths[path_idx]]
 
-        # Define offsets
-        s2 = 1.4142135623730951
-        neighbor_offsets = [
-            (-1, -1, s2), (-1, 0, 1), (-1, 1, s2),
-            (0, -1, 1  ),             (0, 1, 1  ),
-            (1, -1, s2 ), (1, 0, 1 ), ( 1, 1, s2),
-            ]
+#%% Functions -----------------------------------------------------------------
 
-        # Initialize
-        cr, cc = coord
-        nY, nX = msk.shape
-        visited = np.zeros_like(msk, dtype=bool)
-        ddts = np.full_like(msk, np.inf, dtype=float)
-        ddts[cr, cc] = 0.0
-        
-        # Process
-        heap = []
-        heapq.heappush(heap, (0.0, (cr, cc)))
-        while heap:
-            current_dist, (r, c) = heapq.heappop(heap)
-            if visited[r, c]:
-                continue
-            visited[r, c] = True
-            for dr, dc, cost in neighbor_offsets:
-                nr, nc = r + dr, c + dc
-                if (0 <= nr < nY and 0 <= nc < nX and
-                        not visited[nr, nc] and msk[nr, nc] == 1):
-                    new_dist = current_dist + cost
-                    if new_dist < ddts[nr, nc]:
-                        ddts[nr, nc] = new_dist
-                        heapq.heappush(heap, (new_dist, (nr, nc)))
+def get_pulse_data(path, thresh, min_size, tps):
+    
+    # Nested function(s) ------------------------------------------------------
 
-        # Replace infinite distances
-        ddts[np.isinf(ddts)] = np.nan
-
-        return ddts
+    def get_pulse_seg(arr, thresh, min_size=min_size):
+        pulse_msk, pulse_out = [], []
+        for t, img in enumerate(arr):
+            msk = img > thresh
+            msk = remove_small_objects(msk, min_size=min_size)
+            out = binary_dilation(msk) ^ msk
+            pulse_msk.append(msk)
+            pulse_out.append(out)
+        pulse_msk = np.stack(pulse_msk)
+        pulse_out = np.stack(pulse_out)
+        pulse_lbl = label(pulse_msk)
+        return pulse_msk, pulse_out, pulse_lbl
     
-    # Interpolated intensity profiles (iips)
-    def process_svals(vals, sorts):
-        svals, svals_acc = [], []
-        vals = [vals[sort] for sort in sorts]
-        for val, dist, xval in zip(vals, dists, xvals):
-            sval = np.interp(xval, dist, val)
-            sval_acc = get_acc(sval)
-            svals.append(sval)
-            svals_acc.append(sval_acc)
-        return svals, svals_acc
+    # Execute -----------------------------------------------------------------    
     
-    # Execute -----------------------------------------------------------------  
-       
-    data = []
-    rmsk = reduce_msk(msk, interval)    
+    grd = io.imread(str(path).replace("stk", "grd"))
     
-    for lab in np.unique(rmsk)[1:]:
+    pulse_msk, pulse_out, pulse_lbl = get_pulse_seg(
+        grd, thresh, min_size=min_size)
         
-        ridxs = np.where(rmsk == lab)
-        
-        # Temporal analysis
-        sub_tvals = list(sub[:, ridxs[0], ridxs[1]].T)
-        grd_tvals = list(grd[:, ridxs[0], ridxs[1]].T)
-        sub_tvals_acc = [get_acc(tval) for tval in sub_tvals] 
-        grd_tvals_acc = [get_acc(tval) for tval in grd_tvals]  
-        
-        # Spatial analysis
-        ddts = Parallel(n_jobs=-1)(
-            delayed(get_ddts)(msk == lab, (y, x))
-            for y, x in zip(ridxs[0], ridxs[1])
-            )
-        dists = [ddt[ridxs] for ddt in ddts]
-        sorts = [np.argsort(dist) for dist in dists]  
-        dists = [dist[sort] for (dist, sort) in zip(dists, sorts)]
-        xvals = [np.arange(0, int(np.max(dist)), 1) for dist in dists]
-        
-        sub_svals, grd_svals = [], []  
-        sub_svals_acc, grd_svals_acc = [], [] 
-        for t in range(sub.shape[0]):
-            svals, svals_acc = process_svals(sub[t, ...][ridxs], sorts)
-            sub_svals.append(svals)
-            sub_svals_acc.append(svals_acc)
-            svals, svals_acc = process_svals(grd[t, ...][ridxs], sorts)
-            grd_svals.append(svals)
-            grd_svals_acc.append(svals_acc)
-        
-        # Append data
-        data.append({
+    nT = grd.shape[0] 
+    nP = np.max(pulse_lbl) 
+    total_area = np.sum(~np.isnan(grd[0, ...]))
+    
+    area = np.full((nT, nP), np.nan)
+    ints = np.full((nT, nP), np.nan)
+    for t in range(nT):
+        vals = grd[t, ...].ravel()
+        lvals = pulse_lbl[t, ...].ravel()
+        for lbl in np.unique(lvals)[1:]:
+            valid = lvals == lbl
+            area[t, lbl - 1] = np.sum(valid)
+            ints[t, lbl - 1] = np.mean(vals[valid])
+    area_nSum = np.nansum(area, axis=1) / total_area
             
-            "label" : lab, 
-            "ridxs" : ridxs,
-            "nT"    : sub.shape[0], 
-            "nP"    : len(ridxs[0]),
+    tmax, tmax_area, tmax_ints = [], [], []  
+    area_reg, ints_reg = [], []
+    for lbl in range(nP):
+        lbl_area = area[:, lbl]
+        lbl_ints = ints[:, lbl]
+        lbl_tmax = np.nanargmax(lbl_area)
+        valid = ~np.isnan(lbl_area)
+        tmax.append(lbl_tmax)
+        tmax_area.append(lbl_area[lbl_tmax])
+        tmax_ints.append(lbl_ints[lbl_tmax])
+        area_reg.append(lbl_area[valid])
+        ints_reg.append(lbl_ints[valid])
+    tmax = np.stack(tmax)
+    tmax_area = np.stack(tmax_area)
+    tmax_ints = np.stack(tmax_ints)
+    area_reg = np.vstack(match_list(area_reg)).T
+    ints_reg = np.vstack(match_list(ints_reg)).T
+    
+    tmax_cat, tmax_area_cat, tmax_ints_cat = [], [], []
+    area_reg_avgCat, ints_reg_avgCat = [], []
+    for tp in range(1, len(tps)):
+        valid = (tmax > tps[tp - 1]) & (tmax <= tps[tp])
+        tmax_cat.append(np.sum(valid))
+        tmax_area_cat.append(tmax_area[valid])
+        tmax_ints_cat.append(tmax_ints[valid])
+        area_reg_avgCat.append(np.nanmean(area_reg[:, valid], axis = 1))
+        ints_reg_avgCat.append(np.nanmean(ints_reg[:, valid], axis = 1))
+    
+    for tp in range(1, len(tps)):
+        tmax_cat[tp - 1] /= (tps[tp] - tps[tp - 1]) / 60 # pulse per min
             
-            # Temporal
-            "sub_tvals"     : sub_tvals,
-            "grd_tvals"     : grd_tvals,
-            "sub_tvals_acc" : sub_tvals_acc,
-            "grd_tvals_acc" : grd_tvals_acc,
-            
-            # Spatial
-            "ddts"          : ddts,
-            "dists"         : dists,
-            "sorts"         : sorts,
-            "sub_svals"     : sub_svals,
-            "grd_svals"     : grd_svals,
-            "sub_svals_acc" : sub_svals_acc,
-            "grd_svals_acc" : grd_svals_acc,
-            
-            })
+    pulse_data = {
         
+        # General
+        "path"             : path,            # file path
+        "name"             : path.name,       # file name
+        "nT"               : nT,              # number of timepoints
+        "nP"               : nP,              # number of pulses
+        "total_area"       : total_area,      # total area (msk area)
+        
+        # Images
+        "grd"              : grd,             # derivative of sub intensities
+        "pulse_msk"        : pulse_msk,       # pulse mask
+        "pulse_out"        : pulse_out,       # pulse outlines
+        "pulse_lbl"        : pulse_lbl,       # pluse labels (3D)
+        
+        # Data
+        "area"             : area,            # row = time, col = pulse, val = area
+        "ints"             : ints,            # row = time, col = pulse, val = ints
+        "area_nSum"        : area_nSum,       # row = % of total area covered by pulse
+        "tmax"             : tmax,            # row = time of pulse max. area
+        "tmax_area"        : tmax_area,       # row = area of pulse max. area
+        "tmax_ints"        : tmax_ints,       # row = ints of pulse max. area
+        "tmax_cat"         : tmax_cat,        # ...
+        "tmax_area_cat"    : tmax_area_cat,   # ...
+        "tmax_ints_cat"    : tmax_ints_cat,   # ...
+        "area_reg"         : area_reg,        # ...
+        "ints_reg"         : ints_reg,        # ...
+        "area_reg_avgCat"  : area_reg_avgCat, # ...
+        "ints_reg_avgCat"  : ints_reg_avgCat, # ...
+        
+        }
+    
+    return pulse_data
+
+def merge_pulse_data(pulse_data):
+    
+    m_area_nSum = []
+    m_tmax, m_tmax_area, m_tmax_ints = [], [], []
+    m_tmax_cat, m_tmax_area_cat, m_tmax_ints_cat = [], [], []
+    m_area_reg_avgCat, m_ints_reg_avgCat = [], []
+    for data in pulse_data: 
+        m_area_nSum.append(data["area_nSum"]) 
+        m_tmax.append(data["tmax"]) 
+        m_tmax_area.append(data["tmax_area"]) 
+        m_tmax_ints.append(data["tmax_ints"]) 
+        m_tmax_cat.append(data["tmax_cat"])
+        m_tmax_area_cat.append(data["tmax_area_cat"])
+        m_tmax_ints_cat.append(data["tmax_ints_cat"])
+        m_area_reg_avgCat.append(data["area_reg_avgCat"])
+        m_ints_reg_avgCat.append(data["ints_reg_avgCat"])
+        
+    area_nSum_avg = np.nanmean(np.stack(match_list(m_area_nSum)).T, axis=1)
+    area_nSum_std = np.nanstd(np.stack(match_list(m_area_nSum)).T, axis=1)
+    tmax_cct = np.concatenate(m_tmax)
+    tmax_area_cct = np.concatenate(m_tmax_area)
+    tmax_ints_cct = np.concatenate(m_tmax_ints)
+    tmax_cat_avg = np.nanmean(np.vstack(m_tmax_cat), axis=0)
+    tmax_cat_std = np.nanstd(np.vstack(m_tmax_cat), axis=0)
+    tmax_area_cat_cct, tmax_ints_cat_cct = [], []
+    area_reg_avgCat_avg, ints_reg_avgCat_avg = [], []
+    area_reg_avgCat_std, ints_reg_avgCat_std = [], []
+    for tp in range(1, len(tps)):
+        tmax_area_cat_cct.append(
+            np.concatenate([data[tp - 1] for data in m_tmax_area_cat]))
+        tmax_ints_cat_cct.append(
+            np.concatenate([data[tp - 1] for data in m_tmax_ints_cat]))
+        area_reg_avgCat_avg.append(
+            np.nanmean(match_list([data[tp - 1] for data in m_area_reg_avgCat]), axis=0))
+        ints_reg_avgCat_avg.append(
+            np.nanmean(match_list([data[tp - 1] for data in m_ints_reg_avgCat]), axis=0))
+        area_reg_avgCat_std.append(
+            np.nanstd(match_list([data[tp - 1] for data in m_area_reg_avgCat]), axis=0))
+        ints_reg_avgCat_std.append(
+            np.nanstd(match_list([data[tp - 1] for data in m_ints_reg_avgCat]), axis=0))
+
+    pulse_data_merged = {
+        
+        "area_nSum_avg"       : area_nSum_avg,       # ...
+        "area_nSum_std"       : area_nSum_std,       # ... 
+        "tmax_cct"            : tmax_cct,            # ...
+        "tmax_area_cct"       : tmax_area_cct,       # ...
+        "tmax_ints_cct"       : tmax_ints_cct,       # ...
+        "tmax_cat_avg"        : tmax_cat_avg,        # ...
+        "tmax_cat_std"        : tmax_cat_std,        # ...
+        "tmax_area_cat_cct"   : tmax_area_cat_cct,   # ...
+        "tmax_ints_cat_cct"   : tmax_ints_cat_cct,   # ...
+        "area_reg_avgCat_avg" : area_reg_avgCat_avg, # ...
+        "ints_reg_avgCat_avg" : ints_reg_avgCat_avg, # ...
+        "area_reg_avgCat_std" : area_reg_avgCat_std, # ...
+        "ints_reg_avgCat_std" : ints_reg_avgCat_std, # ...
+        
+        }
+    
+    return pulse_data_merged
+
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
     
-    for path in data_path.glob(f"*rf-{rf}_stk.tif*"):  
+    pulse_data = []
+    for path in img_paths:  
+    
+        t0 = time.time()    
+        print(path.name)
         
-        if path.name == f"Exp2_rf-{rf}_stk.tif":
-                    
-            msk = io.imread(str(path).replace("stk", "msk"))
-            sub = io.imread(str(path).replace("stk", "sub")) 
-            grd = io.imread(str(path).replace("stk", "grd"))
-
-            t0 = time.time()    
-            print(path.name)
-            
-            analyse(msk, sub, grd, interval=interval)
-            
-            t1= time.time()
-            print(f"runtime : {t1 - t0:.3f}")
-            
-            # # Display
-            # import napari 
-            # viewer = napari.Viewer()
-            # viewer.add_labels(rmsk)
-            
-#%%
-
-lab = 4
-t0, t1 = 300, 1800
-sub_tresh = 1.0
-grd_tresh = 0.1
-
-def match_length(vals):
-    matched_vals = vals.copy()
-    max_dist = np.max([len(val) for val in vals])
-    for i, val in enumerate(vals):
-        tmp_nan = np.full((max_dist - val.shape[0]), np.nan)
-        matched_vals[i] = np.hstack((val, tmp_nan))
-    return matched_vals
-
-sub_svals_acc_pavg = []
-grd_svals_acc_pavg = []
-for t in range(data[lab]["nT"]):
+        pulse_data.append(get_pulse_data(path, thresh, min_size, tps))
     
-    sub_valid = sub[t, ...][data[lab]["ridxs"]] > sub_tresh
-    grd_valid = grd[t, ...][data[lab]["ridxs"]] > grd_tresh
-
-    sub_svals_acc_pavg.append(np.nanmean(
-        np.stack(match_length(data[lab]["sub_svals_acc"][t]))[sub_valid], axis=0))
-    grd_svals_acc_pavg.append(np.nanmean(
-        np.stack(match_length(data[lab]["grd_svals_acc"][t]))[grd_valid], axis=0))
+        t1= time.time()
+        print(f"runtime : {t1 - t0:.3f}")
     
-# -----------------------------------------------------------------------------    
-    
-sub_svals_acc_pavg_t0avg = np.nanmean(
-    np.stack(sub_svals_acc_pavg[t0:t1]), axis=0)
-grd_svals_acc_pavg_t0avg = np.nanmean(
-    np.stack(grd_svals_acc_pavg[t0:t1]), axis=0)
-sub_svals_acc_pavg_t1avg = np.nanmean(
-    np.stack(sub_svals_acc_pavg[t1:-1]), axis=0)
-grd_svals_acc_pavg_t1avg = np.nanmean(
-    np.stack(grd_svals_acc_pavg[t1:-1]), axis=0)
+    pulse_data_merged = merge_pulse_data(pulse_data)
 
-# -----------------------------------------------------------------------------
+    # Display
+    if isinstance(path_idx, int):
+        viewer = napari.Viewer()
+        viewer.add_image(
+            pulse_data[path_idx]["grd"], contrast_limits=[-2, 2], colormap="twilight")
+        viewer.add_image(
+            pulse_data[path_idx]["pulse_out"], blending="translucent", opacity=0.5)
+        viewer.add_labels(
+            pulse_data[path_idx]["pulse_lbl"], blending="translucent")
 
-plt.figure(figsize=(12, 12))
+#%% Plot ----------------------------------------------------------------------
 
-plt.subplot(2, 1, 1)
-plt.plot(sub_svals_acc_pavg_t0avg)
-plt.plot(sub_svals_acc_pavg_t1avg)
+plt.figure(figsize=(8, 12))
+cmap = plt.get_cmap("turbo", len(tps))
+hlabels = [f"{tps[tp-1]} - {tps[tp]}" for tp in range(1, len(tps))]
+vlabels = [f"{tps[tp-1]}\n{tps[tp]}" for tp in range(1, len(tps))]
 
-plt.subplot(2, 1, 2)
-plt.plot(grd_svals_acc_pavg_t0avg)
-plt.plot(grd_svals_acc_pavg_t1avg)
+# Pulse Area
+plt.subplot(4, 1, 1)
+plt.title("Cumulative Pulse Area")
+data = pulse_data_merged["area_nSum_avg"]
+plt.plot(data)
+for tp in range(1, len(tps)):
+    plt.axvspan(
+        tps[tp - 1], tps[tp], ymin=0, ymax=0.03,
+        facecolor=cmap(tp - 1), alpha=1
+        )
+plt.ylabel("Cumulative Pulse Area (pixels)")
+plt.xlabel("Time (s)")
 
-#%%
+# Pulse Frequency
+plt.subplot(4, 3, 4)
+plt.title("Pulse Frequency")
+data_avg = pulse_data_merged["tmax_cat_avg"]
+data_std = pulse_data_merged["tmax_cat_std"]
+for tp in range(1, len(tps)):
+    plt.bar(
+        vlabels[tp - 1], 
+        data_avg[tp - 1], 
+        yerr=data_std[tp - 1],
+        color=cmap(tp - 1),
+        capsize=5,
+        )
+plt.ylabel("Pulse Number (min-1)")
+plt.xlabel("Time Categories (s)")
 
-# sub_svals_acc_tavg = []
-# grd_svals_acc_tavg = []
-# for p in range(data[lab]["nP"]):
-#     sub_svals_acc_tavg.append(np.nanmean(
-#         np.stack([data[lab]["sub_svals_acc"][t][p] 
-#                   for t in range(data[lab]["nT"])]), axis=0))
-#     grd_svals_acc_tavg.append(np.nanmean(
-#         np.stack([data[lab]["grd_svals_acc"][t][p] 
-#                   for t in range(data[lab]["nT"])]), axis=0))
-# sub_svals_acc_tavg = match_length(sub_svals_acc_tavg)
-# grd_svals_acc_tavg = match_length(grd_svals_acc_tavg)
+# Boxplots (Area)
+plt.subplot(4, 3, 5)
+plt.title("Pulse Area (cat.)")
+data = pulse_data_merged["tmax_area_cat_cct"]
+for tp in range(1, len(tps)):
+    plt.boxplot(data[tp - 1], positions=[tp], widths=0.6, showfliers=False)
+plt.xticks(np.arange(1, len(tps)), vlabels)
+plt.ylabel("Pulse Area (pixels)")
+plt.xlabel("Time Categories (s)")
 
-# sub_svals_acc_tavg_pavg = np.nanmean(np.stack(sub_svals_acc_tavg), axis=0)
-# grd_svals_acc_tavg_pavg = np.nanmean(np.stack(grd_svals_acc_tavg), axis=0)
+# Boxplots (Intensity)
+plt.subplot(4, 3, 6)
+plt.title("Pulse Intensity (cat.)")
+data = pulse_data_merged["tmax_ints_cat_cct"]
+for tp in range(1, len(tps)):
+    plt.boxplot(data[tp - 1], positions=[tp], widths=0.6, showfliers=False)
+plt.xticks(np.arange(1, len(tps)), vlabels)
+plt.ylabel("Fluo. Int. Change (s-1)")
+plt.xlabel("Time Categories (s)")
+
+# Pulse Area (registered & categorized)
+plt.subplot(4, 1, 3)
+plt.title("Pulse Area (registered & categorized)")
+data_avg = pulse_data_merged["area_reg_avgCat_avg"]
+data_std = pulse_data_merged["area_reg_avgCat_std"]
+data_x = np.arange(len(data_avg[0]))
+for tp in range(1, len(tps)):
+    plt.errorbar(
+        data_x, data_avg[tp - 1], 
+        yerr=data_std[tp - 1],
+        label=hlabels[tp - 1], 
+        color=cmap(tp - 1),
+        fmt='o-', capsize=5,
+        )
+plt.ylabel("Pulse Area (pixels)")
+plt.xlabel("Time (s)")
+plt.legend() 
+
+# Pulse Intensity (registered & categorized)
+plt.subplot(4, 1, 4)
+data_avg = pulse_data_merged["ints_reg_avgCat_avg"]
+data_std = pulse_data_merged["ints_reg_avgCat_std"]
+data_x = np.arange(len(data_avg[0]))
+plt.title("Pulse Intensity (registered & categorized)")
+for tp in range(1, len(tps)):
+    plt.errorbar(
+        data_x, data_avg[tp - 1],  
+        yerr=data_std[tp - 1],
+        label=hlabels[tp - 1], 
+        color=cmap(tp - 1),
+        fmt='o-', capsize=5,
+        )
+plt.ylabel("Fluo. Int. Change (s-1)")
+plt.xlabel("Time (s)") 
+plt.legend() 
+
+plt.tight_layout()
+plt.show()
