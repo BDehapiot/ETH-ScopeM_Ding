@@ -164,6 +164,11 @@ def analyse(path, interval, tps):
             svals, svals_acc = process_svals(grd[t, ...][ridxs], sorts)
             grd_svals.append(svals)
             grd_svals_acc.append(svals_acc)
+            
+        sub_svals_cat_acc, grd_svals_cat_acc = [], []
+        for tp in range(1, len(tps)):
+            sub_svals_cat_acc.append(sub_svals_acc[tps[tp - 1] : tps[tp]])
+            grd_svals_cat_acc.append(grd_svals_acc[tps[tp - 1] : tps[tp]])
 
         # Append data
         acc_data.append({
@@ -180,17 +185,19 @@ def analyse(path, interval, tps):
             "grd_tvals_cat"     : grd_tvals_cat,     # categorized grd_tvals
             "sub_tvals_acc"     : sub_tvals_acc,     # acc of sub_tvals
             "grd_tvals_acc"     : grd_tvals_acc,     # acc of grd_tvals
-            "sub_tvals_cat_acc" : sub_tvals_cat_acc, # acc of sub_tvals_acc
-            "grd_tvals_cat_acc" : grd_tvals_cat_acc, # acc of grd_tvals_acc
+            "sub_tvals_cat_acc" : sub_tvals_cat_acc, # acc of sub_tvals_cat
+            "grd_tvals_cat_acc" : grd_tvals_cat_acc, # acc of grd_tvals_cat
             
             # Spatial
-            "ddts"          : ddts,          # Dijkstra distance transforms of analysed pixels
-            "dists"         : dists,         # sorted distances of ddts
-            "sorts"         : sorts,         # sorting indexes
-            "sub_svals"     : sub_svals,     # spatial values for sub analysed pixels
-            "grd_svals"     : grd_svals,     # spatial values for grd analysed pixels
-            "sub_svals_acc" : sub_svals_acc, # acc of sub_svals
-            "grd_svals_acc" : grd_svals_acc, # acc of grd_svals
+            "ddts"              : ddts,              # Dijkstra distance transforms of analysed pixels
+            "dists"             : dists,             # sorted distances of ddts
+            "sorts"             : sorts,             # sorting indexes
+            "sub_svals"         : sub_svals,         # spatial values for sub analysed pixels
+            "grd_svals"         : grd_svals,         # spatial values for grd analysed pixels
+            "sub_svals_acc"     : sub_svals_acc,     # acc of sub_svals
+            "grd_svals_acc"     : grd_svals_acc,     # acc of grd_svals
+            "sub_svals_cat_acc" : sub_svals_cat_acc, # categorized acc of sub_svals
+            "grd_svals_cat_acc" : grd_svals_cat_acc, # categorized acc of grd_svals
             
             })
     
@@ -246,10 +253,7 @@ if avg == "experiment":
             np.concatenate([dat["grd_tvals_acc"] for dat in data]).T)
     m_sub_tvals_acc = match_list(m_sub_tvals_acc)
     m_grd_tvals_acc = match_list(m_grd_tvals_acc)
-        
-    sub_tvals_acc_avg, grd_tvals_acc_avg = [], []
-    sub_tvals_acc_std, grd_tvals_acc_std = [], []
-    
+            
     sub_tvals_acc_avg = np.nanmean(np.stack(
         [np.nanmean(data, axis=1) for data in m_sub_tvals_acc]), axis=0)
     sub_tvals_acc_std = np.nanstd(np.stack(
@@ -305,79 +309,97 @@ if avg == "experiment":
         m_sub_tvals_cat_acc.append(tmp_sub_cat)
         m_grd_tvals_cat_acc.append(tmp_grd_cat)
     
-    '''
+    sub_tvals_cat_acc_avg, grd_tvals_cat_acc_avg = [], []
+    sub_tvals_cat_acc_std, grd_tvals_cat_acc_std = [], []
+    for tp in range(1, len(tps)):
+        sub_tvals_cat_acc_avg.append(np.nanmean(np.stack(match_list(
+            [data[tp - 1] for data in m_sub_tvals_cat_acc])).T, axis=1))
+        sub_tvals_cat_acc_std.append(np.nanstd(np.stack(match_list(
+            [data[tp - 1] for data in m_sub_tvals_cat_acc])).T, axis=1))
+        grd_tvals_cat_acc_avg.append(np.nanmean(np.stack(match_list(
+            [data[tp - 1] for data in m_grd_tvals_cat_acc])).T, axis=1))
+        grd_tvals_cat_acc_std.append(np.nanstd(np.stack(match_list(
+            [data[tp - 1] for data in m_grd_tvals_cat_acc])).T, axis=1))
+
+#%%
+
+avg = "experiment" # "cluster" or "experiment"
+
+if avg == "experiment":
+
+    m_sub_svals_cat_acc = [[] for _ in range(len(tps) - 1)]  
+    m_grd_svals_cat_acc = [[] for _ in range(len(tps) - 1)]  
+    for tp in range(1, len(tps)):
+        for data in acc_data: 
+            tmp_sub_cat, tmp_grd_cat = [], []
+            for dat in data:
+                tmp_tmp_sub_cat, tmp_tmp_grd_cat = [], []
+                for dt in dat["sub_svals_cat_acc"][tp - 1]:
+                    tmp_tmp_sub_cat.append(np.nanmean(np.stack(match_list(dt)).T, axis=1))
+                for dt in dat["grd_svals_cat_acc"][tp - 1]:
+                    tmp_tmp_grd_cat.append(np.nanmean(np.stack(match_list(dt)).T, axis=1))
+                tmp_sub_cat.append(np.nanmean(np.stack(tmp_tmp_sub_cat), axis=0))
+                tmp_grd_cat.append(np.nanmean(np.stack(tmp_tmp_grd_cat), axis=0))
+            m_sub_svals_cat_acc[tp - 1].append(
+                np.nanmean(np.stack(match_list(tmp_sub_cat)), axis=0))
+            m_grd_svals_cat_acc[tp - 1].append(
+                np.nanmean(np.stack(match_list(tmp_grd_cat)), axis=0))
     
-    !!! Need to average the things by experiments !!!
+    sub_svals_cat_acc_avg = [
+        np.nanmean(np.stack(match_list(data)), axis=0) for data in m_sub_svals_cat_acc]
+    sub_svals_cat_acc_std = [
+        np.nanstd(np.stack(match_list(data)), axis=0) for data in m_sub_svals_cat_acc]
+    grd_svals_cat_acc_avg = [
+        np.nanmean(np.stack(match_list(data)), axis=0) for data in m_grd_svals_cat_acc]
+    grd_svals_cat_acc_std = [
+        np.nanstd(np.stack(match_list(data)), axis=0) for data in m_grd_svals_cat_acc]
     
-    '''
-    
+if avg == "cluster":
     pass
 
 #%%
 
-# plt.figure(figsize=(8, 12))
-# cmap = plt.get_cmap("turbo", len(tps))
-# # hlabels = [f"{tps[tp-1]} - {tps[tp]}" for tp in range(1, len(tps))]
-# # vlabels = [f"{tps[tp-1]}\n{tps[tp]}" for tp in range(1, len(tps))]
+plt.figure(figsize=(8, 12))
+cmap = plt.get_cmap("turbo", len(tps))
 
-# plt.subplot(2, 1, 1)
-# plt.title(f"Fluo. Int. ACC (time) \n {avg} averaging")
-# data_avg = sub_tvals_acc_avg
-# data_std = sub_tvals_acc_std
-# data_x = np.arange(len(data_avg))
-# plt.plot(data_x, data_avg)
-# plt.fill_between(
-#     data_x, data_avg - data_std, data_avg + data_std, 
-#     alpha=0.3, color='blue',
-#     )
-# plt.ylabel("Correlation")
-# plt.xlabel("Time (s)")
+# Subplot 1
+plt.subplot(3, 1, 1)
+plt.title(f"Fluo. Int. ACC (time) \n {avg} averaging")
+data_avg = sub_tvals_acc_avg
+data_std = sub_tvals_acc_std
+data_x = np.arange(len(data_avg))
+plt.plot(data_x, data_avg)
+plt.fill_between(
+    data_x, data_avg - data_std, data_avg + data_std,
+    alpha=0.3, color='blue',
+    )
+plt.ylabel("Correlation")
+plt.xlabel("Time (s)")
 
-# plt.subplot(2, 1, 2)
-# plt.title(f"Fluo. Int. ACC (time) \n {avg} averaging")
-# for tp in range(1, len(tps)):
-#     data_avg = sub_tvals_cat_acc_avg[tp - 1]
-#     data_std = sub_tvals_cat_acc_std[tp - 1]
-#     data_x = np.arange(len(data_avg))
-#     plt.plot(data_x, data_avg, color=cmap(tp - 1))
-#     # plt.fill_between(
-#     #     data_x, data_avg - data_std, data_avg + data_std, 
-#     #     alpha=0.1, color=cmap(tp - 1),
-#     #     )
-# plt.ylabel("Correlation")
-# plt.xlabel("Time (s)")
+# Subplot 2
+plt.subplot(3, 1, 2)
+plt.title(f"Fluo. Int. ACC (time) \n {avg} averaging")
+for tp in range(1, len(tps)):
+    data_avg = sub_tvals_cat_acc_avg[tp - 1]
+    data_std = sub_tvals_cat_acc_std[tp - 1]
+    data_x = np.arange(len(data_avg))
+    plt.plot(data_x, data_avg, color=cmap(tp - 1))
+plt.ylabel("Correlation")
+plt.xlabel("Time (s)")
 
-# plt.tight_layout()
-# plt.show()
+# Subplot 3
+plt.subplot(3, 1, 3)
+plt.title(f"???")
+for tp in range(1, len(tps)):
+    nX = 20
+    data_avg = grd_svals_cat_acc_avg[tp - 1][:nX]
+    data_std = grd_svals_cat_acc_std[tp - 1][:nX]
+    data_x = np.arange(nX)
+    plt.plot(data_x, data_avg, color=cmap(tp - 1))
 
-#%%
-
-# plt.subplot(2, 2, 2)
-# plt.title(f"Fluo. Int. Change (s-1) ACC (time) \n {avg} averaging")
-# data_avg = grd_tvals_acc_avg
-# data_std = grd_tvals_acc_std
-# data_x = np.arange(len(data_avg))
-# plt.plot(data_x, data_avg)
-# plt.fill_between(
-#     data_x, data_avg - data_std, data_avg + data_std, 
-#     alpha=0.3, color='blue',
-#     )
-# plt.ylabel("Correlation")
-# plt.xlabel("Time (s)")
-
-# plt.subplot(2, 2, 4)
-# plt.title(f"Fluo. Int. Change (s-1) ACC (time) \n {avg} averaging")
-# for tp in range(1, len(tps)):
-#     data_avg = grd_tvals_cat_acc_avg[tp - 1]
-#     data_std = grd_tvals_cat_acc_std[tp - 1]
-#     data_x = np.arange(len(data_avg))
-#     plt.plot(data_x, data_avg, color=cmap(tp - 1))
-#     # plt.fill_between(
-#     #     data_x, data_avg - data_std, data_avg + data_std, 
-#     #     alpha=0.1, color=cmap(tp - 1),
-#     #     )
-# plt.ylabel("Correlation")
-# plt.xlabel("Time (s)")
+# Adjust layout
+plt.tight_layout()
+plt.show()
     
 #%%
 
