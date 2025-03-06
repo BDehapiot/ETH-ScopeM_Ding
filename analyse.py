@@ -27,15 +27,17 @@ from skimage.morphology import binary_dilation, remove_small_objects
 #%% Inputs --------------------------------------------------------------------
 
 # Parameters
-rf = 0.05
+rf = 0.1
 thresh = 0.2
 min_size = 320 * rf # 32 for rf = 0.1
-tps = [0, 300, 900, 2000, 2700] # Experiment timepoints
+# tps = [0, 300, 900, 2000, 2700] # Experiment timepoints
+tps = [0, 1200, 3600, 7200, 10800] # Experiment timepoints
 
 # Paths
-data_path = Path("D:\local_Ding\data")
+# data_path = Path("D:\local_Ding\data")
+data_path = Path.cwd() / "_local"
 img_paths = list(data_path.glob(f"*rf-{rf}_stk.tif*"))
-path_idx = "all"
+path_idx = 0
 
 if isinstance(path_idx, int):
     img_paths = [img_paths[path_idx]]
@@ -253,6 +255,7 @@ for tp in range(1, len(tps)):
         )
 plt.ylabel("Cumulative Pulse Area (pixels)")
 plt.xlabel("Time (s)")
+plt.ylim(-0.02, 0.3)
 
 # Pulse Frequency
 plt.subplot(4, 3, 4)

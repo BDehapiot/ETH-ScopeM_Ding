@@ -13,7 +13,8 @@ from skimage.transform import rescale
 #%% Inputs --------------------------------------------------------------------
 
 # Path
-data_path = Path("D:\local_Ding\data")
+# data_path = Path("D:\local_Ding\data")
+data_path = Path.cwd() / "_local"
 
 # Parameters
 rf = 0.1
@@ -45,7 +46,7 @@ def extract(path, rf, window_size):
 
 if __name__ == "__main__":
     
-    for path in data_path.glob("*.ome"): 
+    for path in data_path.glob("*4.ome"): 
         
         t0 = time.time()
         

@@ -1,0 +1,7 @@
+{
+    "img_norm": "global",
+    "msk_type": "normal",
+    "patch_size": 128,
+    "patch_overlap": 64,
+    "downscaling_factor": 1
+}

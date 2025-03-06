@@ -23,7 +23,7 @@ dependencies:
   # conda_tf_nogpu
   - pip:
     # pip_core
-    - bd-tools==0.2.1
+    - bd-tools
     # pip_spec
     # pip_tf_nogpu
     - albumentations
