@@ -5,19 +5,27 @@ from skimage import io
 from pathlib import Path
 
 # bdtools
+from bdtools.norm import norm_pct
 from bdtools.models.unet import UNet
+from bdtools.models.annotate import Annotate
 
 #%% Inputs --------------------------------------------------------------------
+
+# Procedure
+extract = 0
+annotate = 0
+train = 1
+predict = 0
 
 # UNet build()
 backbone = "resnet18"
 activation = "sigmoid"
 
 # UNet preprocess()
-img_norm = "global"
+img_norm = "image"
 msk_type = "normal"
-patch_size = 128
-patch_overlap = 64
+patch_size = 64
+patch_overlap = 32
 downscaling_factor = 1
 
 # UNet augment()
@@ -39,63 +47,83 @@ patience = 20
 #%% Initialize ----------------------------------------------------------------
 
 # Path
+data_path = Path("D:\local_Ding\data")
 train_path = Path("_remote", "train")
-
-# Load data
-X, y = [], []
-for path in list(train_path.glob("*mask.tif")):
-    y.append(io.imread(path))
-    X.append(io.imread(str(path).replace("_mask", "")))
-X = np.stack(X)
-y = np.stack(y)
 
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
     
-    # Train -------------------------------------------------------------------
+    if extract:
+        
+        for path in data_path.glob("*stk.tif"):
+            stk = io.imread(path)
+            prj = np.mean(stk, axis=0)
+            prj = norm_pct(prj)
+            io.imsave(
+                train_path / str(path.name).replace("stk", "prj"),
+                prj.astype("float32"), check_contrast=False,
+                )
     
-    unet = UNet(
-        save_name="",
-        load_name="",
-        root_path=Path.cwd(),
-        backbone=backbone,
-        classes=1,
-        activation=activation,
-        )
+    if annotate:
+        Annotate(train_path)
     
-    unet.train(
+    if train:
         
-        X, y, 
-        X_val=None, y_val=None,
-        preview=False,
+        # Load data
+        X, y = [], []
+        for path in list(train_path.glob("*mask.tif")):
+            y.append(io.imread(path))
+            X.append(io.imread(str(path).replace("_mask", "")))
+        X = np.stack(X)
+        y = np.stack(y)
+        X = np.tile(X, (3, 1, 1))
+        y = np.tile(y, (3, 1, 1))
+    
+        # UNet build()
+        unet = UNet(
+            save_name="",
+            load_name="",
+            root_path=Path.cwd(),
+            backbone=backbone,
+            classes=1,
+            activation=activation,
+            )
         
-        # Preprocess
-        img_norm=img_norm, 
-        msk_type=msk_type, 
-        patch_size=patch_size,
-        patch_overlap=patch_overlap,
-        downscaling_factor=downscaling_factor, 
-        
-        # Augment
-        iterations=iterations,
-        gamma_p=gamma_p, 
-        gblur_p=gblur_p, 
-        noise_p=noise_p, 
-        flip_p=flip_p, 
-        distord_p=distord_p,
-        
-        # Train
-        epochs=epochs,
-        batch_size=batch_size,
-        validation_split=validation_split,
-        metric=metric,
-        learning_rate=learning_rate,
-        patience=patience,
-        
-        )
+        # UNet train()
+        unet.train(
+            
+            X, y, 
+            X_val=None, y_val=None,
+            preview=False,
+            
+            # Preprocess
+            img_norm=img_norm, 
+            msk_type=msk_type, 
+            patch_size=patch_size,
+            patch_overlap=patch_overlap,
+            downscaling_factor=downscaling_factor, 
+            
+            # Augment
+            iterations=iterations,
+            gamma_p=gamma_p, 
+            gblur_p=gblur_p, 
+            noise_p=noise_p, 
+            flip_p=flip_p, 
+            distord_p=distord_p,
+            
+            # Train
+            epochs=epochs,
+            batch_size=batch_size,
+            validation_split=validation_split,
+            metric=metric,
+            learning_rate=learning_rate,
+            patience=patience,
+            
+            )
     
     # Predict -----------------------------------------------------------------
     
-    unet = UNet(load_name="model_128_normal_2000-160_1")
-    prd = unet.predict(rstk[::25], verbose=1)
+    # if predict:
+    #     unet = UNet(load_name="model_128_normal_2000-160_1")
+    #     prd = unet.predict(rstk[::25], verbose=1)

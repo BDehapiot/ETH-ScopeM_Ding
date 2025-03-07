@@ -13,16 +13,12 @@ from skimage.transform import rescale
 #%% Inputs --------------------------------------------------------------------
 
 # Path
-# data_path = Path("D:\local_Ding\data")
-data_path = Path.cwd() / "_local"
-
-# Parameters
-rf = 0.1
-window_size = 501
+data_path = Path("D:\local_Ding\data")
+# data_path = Path.cwd() / "_local"
 
 #%% Function: extract() -------------------------------------------------------
 
-def extract(path, rf, window_size):
+def extract(path, rf):
     
     # Nested function(s) ------------------------------------------------------
     
@@ -46,16 +42,15 @@ def extract(path, rf, window_size):
 
 if __name__ == "__main__":
     
-    for path in data_path.glob("*4.ome"): 
+    for path in data_path.glob("*.ome"): 
+        
+        rf = 0.1 if "Exp4" in path.name else 0.05 
         
         t0 = time.time()
-        
-        print(path.name)
-        
-        stk = extract(path, rf, window_size)
-        
+        print(f"extract : {path.name} : ", end="", flush=True)
+        stk = extract(path, rf)
         t1 = time.time()
-        print(f"runtime : {t1 - t0:.3f}s")
+        print(f"{t1 - t0:.3f}s")
         
         # Save
         io.imsave(

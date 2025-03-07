@@ -1,5 +1,6 @@
 #%% Imports -------------------------------------------------------------------
 
+import re
 import time
 import napari
 import numpy as np
@@ -17,40 +18,46 @@ from skimage.morphology import binary_dilation, remove_small_objects
 #%% Comments ------------------------------------------------------------------
 
 '''
-# Experiment timepoints
+Exp1,2,3 : timepoint = 1s
+Exp4     : timepoint = 250ms
+    
 1-300s     - 2mM Glucose,
 301-900s   - 20mM Glucose,
 901-1800s  - 20mM Glucose,
 1801-2700s - 20mM Glucose + 100uM Mefloquine,
+
 '''
 
 #%% Inputs --------------------------------------------------------------------
 
 # Parameters
-rf = 0.1
-thresh = 0.2
-min_size = 320 * rf # 32 for rf = 0.1
-# tps = [0, 300, 900, 2000, 2700] # Experiment timepoints
-tps = [0, 1200, 3600, 7200, 10800] # Experiment timepoints
+thresh_coeff = 0.25
+min_size = 320
 
 # Paths
-# data_path = Path("D:\local_Ding\data")
-data_path = Path.cwd() / "_local"
-img_paths = list(data_path.glob(f"*rf-{rf}_stk.tif*"))
-path_idx = 0
+data_path = Path("D:\local_Ding\data")
+img_paths = list(data_path.glob("*stk.tif"))
+path_idx = 3
+
+#%% Initialize ----------------------------------------------------------------
+
+if path_idx == 3:
+    tps = [0, 1200, 3600, 7200, 10800] # Experiment timepoints
+else:
+    tps = [0, 300, 900, 1800, 2700]
 
 if isinstance(path_idx, int):
     img_paths = [img_paths[path_idx]]
 
 #%% Functions -----------------------------------------------------------------
 
-def get_pulse_data(path, thresh, min_size, tps):
+def get_pulse_data(path, thresh_coeff, min_size, tps):
     
     # Nested function(s) ------------------------------------------------------
 
-    def get_pulse_seg(arr, thresh, min_size=min_size):
+    def get_pulse_seg(grd, thresh, min_size=min_size):
         pulse_msk, pulse_out = [], []
-        for t, img in enumerate(arr):
+        for t, img in enumerate(grd):
             msk = img > thresh
             msk = remove_small_objects(msk, min_size=min_size)
             out = binary_dilation(msk) ^ msk
@@ -62,12 +69,25 @@ def get_pulse_data(path, thresh, min_size, tps):
         return pulse_msk, pulse_out, pulse_lbl
     
     # Execute -----------------------------------------------------------------    
+
+    # Fetch rescaling factor (rf)
+    match = re.search(r"rf-([-+]?\d*\.\d+|\d+)", path.name)
+    if match: 
+        rf = float(match.group(1)) 
     
+    # Load data
     grd = io.imread(str(path).replace("stk", "grd"))
     
+    # Initialize
+    min_size = int(min_size * rf)
+    thresh = np.nanpercentile(grd, 99.9) / thresh_coeff
+    print(f"{thresh:.3f}")
+
+    # Segment pulses
     pulse_msk, pulse_out, pulse_lbl = get_pulse_seg(
         grd, thresh, min_size=min_size)
         
+    # Measure pulses
     nT = grd.shape[0] 
     nP = np.max(pulse_lbl) 
     total_area = np.sum(~np.isnan(grd[0, ...]))
@@ -219,22 +239,22 @@ if __name__ == "__main__":
         t0 = time.time()    
         print(path.name)
         
-        pulse_data.append(get_pulse_data(path, thresh, min_size, tps))
+        pulse_data.append(get_pulse_data(path, thresh_coeff, min_size, tps))
     
         t1= time.time()
         print(f"runtime : {t1 - t0:.3f}")
-    
+
     pulse_data_merged = merge_pulse_data(pulse_data)
 
     # Display
     if isinstance(path_idx, int):
         viewer = napari.Viewer()
         viewer.add_image(
-            pulse_data[path_idx]["grd"], contrast_limits=[-2, 2], colormap="twilight")
+            pulse_data[0]["grd"], contrast_limits=[-2, 2], colormap="twilight")
         viewer.add_image(
-            pulse_data[path_idx]["pulse_out"], blending="translucent", opacity=0.5)
+            pulse_data[0]["pulse_out"], blending="translucent", opacity=0.5)
         viewer.add_labels(
-            pulse_data[path_idx]["pulse_lbl"], blending="translucent")
+            pulse_data[0]["pulse_lbl"], blending="translucent")
 
 #%% Plot ----------------------------------------------------------------------
 

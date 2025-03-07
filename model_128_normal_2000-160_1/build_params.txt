@@ -1,5 +1,0 @@
-{
-    "classes": 1,
-    "backbone": "resnet18",
-    "activation": "sigmoid"
-}
