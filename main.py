@@ -2,6 +2,7 @@
 
 import re
 import time
+import napari
 import tifffile
 import numpy as np
 from skimage import io
@@ -29,8 +30,9 @@ run_process = 0
 run_analyse = 0
 
 # Parameters (analyse)
-thresh_coeff = 0.25
+thresh_coeff = 0.1
 min_size = 320
+tps = [0, 300, 900, 1800, 2700]
 
 #%% Initialize ----------------------------------------------------------------
 
@@ -38,12 +40,6 @@ min_size = 320
 data_path = Path("D:\local_Ding\data")
 # data_path = Path(r"\\scopem-idadata.ethz.ch\BDehapiot\remote_Ding\data")
 ome_paths = list(data_path.glob("*.ome"))
-
-# Timepoints
-if path_idx == 3:
-    tps = [0, 1200, 3600, 7200, 10800] # Experiment timepoints
-else:
-    tps = [0, 300, 900, 1800, 2700]
 
 #%% Function(s) ---------------------------------------------------------------
 
@@ -174,7 +170,13 @@ def process(path):
 
 #%% Function : analyse() ------------------------------------------------------
 
-def analyse(path, thresh_coeff, min_size, tps):
+def analyse(
+        path, 
+        thresh_coeff=0.1, 
+        min_size=320, 
+        tps=[0, 300, 900, 1800, 2700],
+        display=False,
+        ):
     
     # Nested function(s) ------------------------------------------------------
 
@@ -198,20 +200,29 @@ def analyse(path, thresh_coeff, min_size, tps):
     if match: 
         rf = float(match.group(1)) 
     
-    # Fetch exposure time
-    
+    # Fetch exposure time (et)
+    match = re.match(r".*_(\d{4})ms_.*", path.name)
+    if match:
+        et = int(match.group(1))   
+    tps = [tp * (1000 / et) for tp in tps]
     
     # Load data
     grd = io.imread(str(path).replace("stk", "grd"))
     
     # Initialize
     min_size = int(min_size * rf)
-    thresh = np.nanpercentile(grd, 99.9) / thresh_coeff
-    print(f"{thresh:.3f}")
+    thresh = np.nanpercentile(grd, 99.9) * thresh_coeff
 
     # Segment pulses
     pulse_msk, pulse_out, pulse_lbl = segment_pulses(
         grd, thresh, min_size=min_size)
+    
+    # Dipslay
+    if display:
+        viewer = napari.Viewer()
+        viewer.add_image(grd, colormap="twilight")
+        viewer.add_image(pulse_out, blending="additive")
+        return
         
     # Measure pulses
     nT = grd.shape[0] 
@@ -294,67 +305,6 @@ def analyse(path, thresh_coeff, min_size, tps):
     
     return data
 
-# def merge_pulse_data(pulse_data):
-    
-#     m_area_nSum = []
-#     m_tmax, m_tmax_area, m_tmax_ints = [], [], []
-#     m_tmax_cat, m_tmax_area_cat, m_tmax_ints_cat = [], [], []
-#     m_area_reg_avgCat, m_ints_reg_avgCat = [], []
-#     for data in pulse_data: 
-#         m_area_nSum.append(data["area_nSum"]) 
-#         m_tmax.append(data["tmax"]) 
-#         m_tmax_area.append(data["tmax_area"]) 
-#         m_tmax_ints.append(data["tmax_ints"]) 
-#         m_tmax_cat.append(data["tmax_cat"])
-#         m_tmax_area_cat.append(data["tmax_area_cat"])
-#         m_tmax_ints_cat.append(data["tmax_ints_cat"])
-#         m_area_reg_avgCat.append(data["area_reg_avgCat"])
-#         m_ints_reg_avgCat.append(data["ints_reg_avgCat"])
-        
-#     area_nSum_avg = np.nanmean(np.stack(match_list(m_area_nSum)).T, axis=1)
-#     area_nSum_std = np.nanstd(np.stack(match_list(m_area_nSum)).T, axis=1)
-#     tmax_cct = np.concatenate(m_tmax)
-#     tmax_area_cct = np.concatenate(m_tmax_area)
-#     tmax_ints_cct = np.concatenate(m_tmax_ints)
-#     tmax_cat_avg = np.nanmean(np.vstack(m_tmax_cat), axis=0)
-#     tmax_cat_std = np.nanstd(np.vstack(m_tmax_cat), axis=0)
-#     tmax_area_cat_cct, tmax_ints_cat_cct = [], []
-#     area_reg_avgCat_avg, ints_reg_avgCat_avg = [], []
-#     area_reg_avgCat_std, ints_reg_avgCat_std = [], []
-#     for tp in range(1, len(tps)):
-#         tmax_area_cat_cct.append(
-#             np.concatenate([data[tp - 1] for data in m_tmax_area_cat]))
-#         tmax_ints_cat_cct.append(
-#             np.concatenate([data[tp - 1] for data in m_tmax_ints_cat]))
-#         area_reg_avgCat_avg.append(
-#             np.nanmean(match_list([data[tp - 1] for data in m_area_reg_avgCat]), axis=0))
-#         ints_reg_avgCat_avg.append(
-#             np.nanmean(match_list([data[tp - 1] for data in m_ints_reg_avgCat]), axis=0))
-#         area_reg_avgCat_std.append(
-#             np.nanstd(match_list([data[tp - 1] for data in m_area_reg_avgCat]), axis=0))
-#         ints_reg_avgCat_std.append(
-#             np.nanstd(match_list([data[tp - 1] for data in m_ints_reg_avgCat]), axis=0))
-
-#     pulse_data_merged = {
-        
-#         "area_nSum_avg"       : area_nSum_avg,       # ...
-#         "area_nSum_std"       : area_nSum_std,       # ... 
-#         "tmax_cct"            : tmax_cct,            # ...
-#         "tmax_area_cct"       : tmax_area_cct,       # ...
-#         "tmax_ints_cct"       : tmax_ints_cct,       # ...
-#         "tmax_cat_avg"        : tmax_cat_avg,        # ...
-#         "tmax_cat_std"        : tmax_cat_std,        # ...
-#         "tmax_area_cat_cct"   : tmax_area_cat_cct,   # ...
-#         "tmax_ints_cat_cct"   : tmax_ints_cat_cct,   # ...
-#         "area_reg_avgCat_avg" : area_reg_avgCat_avg, # ...
-#         "ints_reg_avgCat_avg" : ints_reg_avgCat_avg, # ...
-#         "area_reg_avgCat_std" : area_reg_avgCat_std, # ...
-#         "ints_reg_avgCat_std" : ints_reg_avgCat_std, # ...
-        
-#         }
-    
-#     return pulse_data_merged
-
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -400,25 +350,27 @@ if __name__ == "__main__":
             
         # Analyse() -----------------------------------------------------------
         
-        t0 = time.time()
-        print(f"analyse - {path.name} : ", end="", flush=True)
-        data = analyse(stk_path)
-        t1 = time.time()
-        print(f"{t1 - t0:.3f}s")
+        # t0 = time.time()
+        # print(f"analyse - {path.name} : ", end="", flush=True)
+        # data = analyse(stk_path, thresh_coeff, min_size, tps)
+        # t1 = time.time()
+        # print(f"{t1 - t0:.3f}s")
         
-        # flt_path = data_path / f"{path.stem}_rf-{rf}_flt.tif"
-        # sub_path = data_path / f"{path.stem}_rf-{rf}_sub.tif"
-        # grd_path = data_path / f"{path.stem}_rf-{rf}_grd.tif"
-        
-        # if not flt_path.exists() or run_process:
-            
-        #     t0 = time.time()
-        #     print(f"process - {path.name} : ", end="", flush=True)
-        #     flt, sub, grd = process(stk_path)
-        #     t1 = time.time()
-        #     print(f"{t1 - t0:.3f}s")
-        
-        #     # Save
-        #     io.imsave(flt_path, flt.astype("float32"), check_contrast=False)
-        #     io.imsave(sub_path, sub.astype("float32"), check_contrast=False)
-        #     io.imsave(grd_path, grd.astype("float32"), check_contrast=False)
+#%%
+
+    idx = 0
+    path = list(data_path.glob("*.ome"))[idx]
+    stk_path = data_path / f"{path.stem}_rf-{rf}_stk.tif"
+    
+    t0 = time.time()
+    print(f"analyse - {path.name} : ", end="", flush=True)
+    data = analyse(
+        stk_path, 
+        thresh_coeff=thresh_coeff, 
+        min_size=min_size, 
+        tps=tps,
+        display=False,
+        )
+    t1 = time.time()
+    print(f"{t1 - t0:.3f}s")
+    
