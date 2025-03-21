@@ -48,7 +48,8 @@ patience = 20
 
 # Path
 data_path = Path("D:\local_Ding\data")
-train_path = Path("_remote", "train")
+# data_path = Path(r"\\scopem-idadata.ethz.ch\BDehapiot\remote_Ding\data")
+train_path = Path(Path.cwd() / "data" / "train")
 
 #%% Execute -------------------------------------------------------------------
 

@@ -22,8 +22,8 @@ from scipy.sparse.linalg import spsolve
 #%% Inputs --------------------------------------------------------------------
 
 # Paths
-data_path = Path("D:\local_Ding\data")
-# data_path = Path.cwd() / "_local"
+# data_path = Path("D:\local_Ding\data")
+data_path = Path(r"\\scopem-idadata.ethz.ch\BDehapiot\remote_Ding\data")
 
 #%% Function(s): --------------------------------------------------------------
 
@@ -89,7 +89,7 @@ def process(path):
 
 if __name__ == "__main__":
     
-    for path in data_path.glob(f"*stk.tif"):
+    for path in data_path.glob("*stk.tif"):
                 
         flt, sub, grd = process(path)
         

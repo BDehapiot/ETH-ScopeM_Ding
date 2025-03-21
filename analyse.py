@@ -37,7 +37,7 @@ min_size = 320
 # Paths
 data_path = Path("D:\local_Ding\data")
 img_paths = list(data_path.glob("*stk.tif"))
-path_idx = 3
+path_idx = 0
 
 #%% Initialize ----------------------------------------------------------------
 

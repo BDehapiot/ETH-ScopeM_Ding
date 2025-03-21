@@ -12,9 +12,9 @@ from skimage.transform import rescale
 
 #%% Inputs --------------------------------------------------------------------
 
-# Path
+# Paths
 data_path = Path("D:\local_Ding\data")
-# data_path = Path.cwd() / "_local"
+# data_path = Path(r"\\scopem-idadata.ethz.ch\BDehapiot\remote_Ding\data")
 
 #%% Function: extract() -------------------------------------------------------
 
