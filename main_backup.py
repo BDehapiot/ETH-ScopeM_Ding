@@ -7,7 +7,7 @@ import tifffile
 import numpy as np
 from skimage import io
 from pathlib import Path
-
+import matplotlib.pyplot as plt
 from joblib import Parallel, delayed 
 
 # bdtools
@@ -33,12 +33,6 @@ from qtpy.QtWidgets import (
     QWidget, QPushButton, QRadioButton, QLabel,
     QGroupBox, QVBoxLayout, QHBoxLayout
     )
-
-# Matplotlib
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import (
-    FigureCanvasQTAgg as FigureCanvas)
-from matplotlib.figure import Figure
 
 #%% Inputs --------------------------------------------------------------------
 
@@ -74,18 +68,6 @@ def get_info(path):
     fr = 1000 / exposure_time
         
     return rf, fr
-
-def get_contrast_limits(
-        arr, 
-        pct_low=0.1,
-        pct_high=99.9,
-        sample_fraction=0.01
-        ):
-    val = arr.ravel()
-    val = np.random.choice(val, size=int(val.size * sample_fraction))
-    pLow = np.nanpercentile(val, pct_low)
-    pHigh = np.nanpercentile(val, pct_high)
-    return [pLow, pHigh]
 
 def match_list(lst, fill=np.nan, ref="max", direction="after", axis=0):
    
@@ -305,7 +287,7 @@ def analyse(
             vals = grd[t, ...].ravel()
             lvals = lbl[t, ...].ravel()
             for l in np.unique(lvals)[1:]:
-                valid = lvals == l
+                valid = lvals == lbl
                 area[t, l - 1] = np.sum(valid)
                 ints[t, l - 1] = np.mean(vals[valid])
         area_nSum = np.nansum(area, axis=1) / total_area
@@ -380,15 +362,16 @@ def analyse(
 #%% Function : plot() ---------------------------------------------------------
 
 def plot(path, tps=[0, 300, 900, 1800, 2700]):
-        
-    global data
     
     # Get info
     rf, fr = get_info(path)
     
     # Path(s)
     dat_path = data_path / f"{path.stem}_rf-{rf}_data.pkl"
-       
+    
+    t0 = time.time()
+    print(f"analyse - {path.name} : ", end="", flush=True)  
+    
     # Load data
     with open(str(dat_path), "rb") as f:
         data = pickle.load(f)
@@ -458,7 +441,22 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     plt.tight_layout()
     plt.show()
     
+    t1 = time.time()
+    print(f"{t1 - t0:.3f}s")    
+    
 #%% Function : display() ------------------------------------------------------
+
+def get_contrast_limits(
+        arr, 
+        pct_low=0.1,
+        pct_high=99.9,
+        sample_fraction=0.01
+        ):
+    val = arr.ravel()
+    val = np.random.choice(val, size=int(val.size * sample_fraction))
+    pLow = np.nanpercentile(val, pct_low)
+    pHigh = np.nanpercentile(val, pct_high)
+    return [pLow, pHigh]
 
 class Display:
     
@@ -577,17 +575,6 @@ class Display:
         self.layout.addWidget(self.info_path)
         self.layout.addWidget(self.info_shortcuts)
         
-        # --- Add matplotlib figure ---
-        # Create a matplotlib figure and canvas
-        self.figure = Figure(figsize=(5, 4))
-        self.canvas = FigureCanvas(self.figure)
-        # Create an axes instance
-        self.ax = self.figure.add_subplot(111)
-        # Example plot: you can replace this with your custom plotting code
-        self.ax.plot([0, 1, 2, 3, 4], [0, 1, 0, 1, 0])
-        # Add the canvas to your layout
-        self.layout.addWidget(self.canvas)
-        
         # Create widget
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
@@ -667,7 +654,6 @@ if __name__ == "__main__":
             tps=tps,
             )
     
-    # # Display
-    # Display(ome_paths)
+    # Display
+    Display(ome_paths)
     
-    plot(ome_paths[0])
