@@ -4,6 +4,7 @@ import re
 import time
 import pickle
 import tifffile
+import warnings
 import numpy as np
 from skimage import io
 from pathlib import Path
@@ -11,8 +12,9 @@ from pathlib import Path
 from joblib import Parallel, delayed 
 
 # bdtools
-from bdtools.nan import nan_filt
 from bdtools.models import UNet
+from bdtools.nan import nan_filt
+from bdtools.norm import norm_pct
 
 # Skimage
 from skimage.measure import label
@@ -29,29 +31,29 @@ from napari.layers.labels.labels import Labels
 
 # Qt
 from qtpy.QtGui import QFont
+from PyQt5.QtCore import QTimer
 from qtpy.QtWidgets import (
     QWidget, QPushButton, QRadioButton, QLabel,
     QGroupBox, QVBoxLayout, QHBoxLayout
     )
 
 # Matplotlib
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas)
-from matplotlib.figure import Figure
 
 #%% Inputs --------------------------------------------------------------------
 
 # Procedure
 run_extract = 0
 run_process = 0
-run_analyse = 0
+run_analyse = 1
 
 # Parameters (analyse)
-thresh_coeff = 0.1
+thresh_coeff = 1.2
 min_size = 320
 tps = [0, 300, 900, 1800, 2700]
-display = False
 
 #%% Initialize ----------------------------------------------------------------
 
@@ -284,11 +286,14 @@ def analyse(
 
         # Load data
         grd = io.imread(grd_path)
-        
+                
         # Initialize
         min_size = int(min_size * rf)
         tpf = [tp * fr for tp in tps]
-        thresh = np.nanpercentile(grd, 99.9) * thresh_coeff   
+        
+        # Auto thresholding
+        grd = norm_pct(grd)
+        thresh = np.nanmedian(grd) * thresh_coeff
 
         # Segment pulses
         lbl, out = segment_pulses(
@@ -327,16 +332,39 @@ def analyse(
         tmax_ints = np.stack(tmax_ints)
         area_reg = np.vstack(match_list(area_reg)).T
         ints_reg = np.vstack(match_list(ints_reg)).T
+               
+        # tmax_cat, tmax_area_cat, tmax_ints_cat = [], [], []
+        # area_reg_avgCat, ints_reg_avgCat = [], []
+        # for tp in range(1, len(tpf)):
+        #     valid = (tmax > tpf[tp - 1]) & (tmax <= tpf[tp])
+        #     tmax_cat.append(np.sum(valid))
+        #     tmax_area_cat.append(tmax_area[valid])
+        #     tmax_ints_cat.append(tmax_ints[valid])           
+        #     area_reg_avgCat.append(np.nanmean(area_reg[:, valid], axis=1))
+        #     ints_reg_avgCat.append(np.nanmean(ints_reg[:, valid], axis=1))
+                                    
+        def safe_nanmean(a, axis=1):
+            if a.shape[axis] == 0:
+                return np.full(a.shape[0], np.nan)
+            if np.all(np.isnan(a), axis=axis).all():
+                return np.full(a.shape[0], np.nan)
+            else:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    return np.nanmean(a, axis=axis)
         
         tmax_cat, tmax_area_cat, tmax_ints_cat = [], [], []
         area_reg_avgCat, ints_reg_avgCat = [], []
         for tp in range(1, len(tpf)):
             valid = (tmax > tpf[tp - 1]) & (tmax <= tpf[tp])
-            tmax_cat.append(np.sum(valid))
+            num_valid = np.count_nonzero(valid)
+            tmax_cat.append(num_valid)
             tmax_area_cat.append(tmax_area[valid])
             tmax_ints_cat.append(tmax_ints[valid])
-            area_reg_avgCat.append(np.nanmean(area_reg[:, valid], axis=1))
-            ints_reg_avgCat.append(np.nanmean(ints_reg[:, valid], axis=1))
+            area_avg = safe_nanmean(area_reg[:, valid], axis=1)
+            ints_avg = safe_nanmean(ints_reg[:, valid], axis=1)
+            area_reg_avgCat.append(area_avg)
+            ints_reg_avgCat.append(ints_avg)
         
         for tp in range(1, len(tps)):
             tmax_cat[tp - 1] /= (tps[tp] - tps[tp - 1]) / (60 * fr)  # pulse per min
@@ -345,26 +373,27 @@ def analyse(
         data = {
             
             # General
-            "path"             : path,            # file path
-            "name"             : path.name,       # file name
-            "nT"               : nT,              # number of timepoints
-            "nP"               : nP,              # number of pulses
-            "total_area"       : total_area,      # total area (msk area)
+            "path"            : path,            # file path
+            "name"            : path.name,       # file name
+            "nT"              : nT,              # number of timepoints
+            "nP"              : nP,              # number of pulses
+            "total_area"      : total_area,      # total area (msk area)
+            "thresh"          : thresh,          # threshold for grd pulses
                         
             # Data
-            "area"             : area,            # row = time, col = pulse, val = area
-            "ints"             : ints,            # row = time, col = pulse, val = ints
-            "area_nSum"        : area_nSum,       # row = % of total area covered by pulse
-            "tmax"             : tmax,            # row = time of pulse max. area
-            "tmax_area"        : tmax_area,       # row = area of pulse max. area
-            "tmax_ints"        : tmax_ints,       # row = ints of pulse max. area
-            "tmax_cat"         : tmax_cat,        # ...
-            "tmax_area_cat"    : tmax_area_cat,   # ...
-            "tmax_ints_cat"    : tmax_ints_cat,   # ...
-            "area_reg"         : area_reg,        # ...
-            "ints_reg"         : ints_reg,        # ...
-            "area_reg_avgCat"  : area_reg_avgCat, # ...
-            "ints_reg_avgCat"  : ints_reg_avgCat, # ...
+            "area"            : area,            # row = time, col = pulse, val = area
+            "ints"            : ints,            # row = time, col = pulse, val = ints
+            "area_nSum"       : area_nSum,       # row = % of total area covered by pulse
+            "tmax"            : tmax,            # row = time of pulse max. area
+            "tmax_area"       : tmax_area,       # row = area of pulse max. area
+            "tmax_ints"       : tmax_ints,       # row = ints of pulse max. area
+            "tmax_cat"        : tmax_cat,        # ...
+            "tmax_area_cat"   : tmax_area_cat,   # ...
+            "tmax_ints_cat"   : tmax_ints_cat,   # ...
+            "area_reg"        : area_reg,        # ...
+            "ints_reg"        : ints_reg,        # ...
+            "area_reg_avgCat" : area_reg_avgCat, # ...
+            "ints_reg_avgCat" : ints_reg_avgCat, # ...
             
             }
         
@@ -380,83 +409,102 @@ def analyse(
 #%% Function : plot() ---------------------------------------------------------
 
 def plot(path, tps=[0, 300, 900, 1800, 2700]):
-        
-    global data
-    
+
     # Get info
     rf, fr = get_info(path)
     
     # Path(s)
     dat_path = data_path / f"{path.stem}_rf-{rf}_data.pkl"
+    fig_path = data_path / f"{path.stem}_rf-{rf}_fig.png"
        
     # Load data
     with open(str(dat_path), "rb") as f:
         data = pickle.load(f)
-    
+
     # Initialize
     tpf = [tp * fr for tp in tps]
-    
-    # Plot
-    plt.figure(figsize=(8, 12))
     cmap = plt.get_cmap("turbo", len(tps))
-    hlabels = [
-        f"{int(tps[tp-1])} - {int(tps[tp])}" 
-        for tp in range(1, len(tps))
-        ]
-    vlabels = [
-        f"{int(tps[tp-1])}\n{int(tps[tp])}" 
-        for tp in range(1, len(tps))
-        ]
+    hlabels = [f"{int(tps[tp-1])} - {int(tps[tp])}" for tp in range(1, len(tps))]
+    vlabels = [f"{int(tps[tp-1])}\n{int(tps[tp])}" for tp in range(1, len(tps))]
 
-    # Pulse Area
-    plt.subplot(4, 1, 1)
-    plt.title("Cumulative Pulse Area")
-    dat = data["area_nSum"]
-    plt.plot(dat)
-    for tp in range(1, len(tps)):
-        plt.axvspan(
-            tpf[tp - 1], tpf[tp], ymin=0, ymax=0.03,
-            facecolor=cmap(tp - 1), alpha=1
-            )
-    plt.ylabel("Cumulative Pulse Area (pixels)")
-    plt.xlabel("Time (s)")
-    plt.ylim(-0.02, 0.3)
+    # Create figure
+    fig = plt.figure(figsize=(3, 3), layout="tight")
+
+    mpl.rcParams.update({
+        
+        "font.family": "Consolas",
+        "font.size": 2,
+        "axes.labelsize": 4,
+        "axes.titlesize": 5,
+        "axes.titlepad": 4,
+        "legend.fontsize": 4,
+        "xtick.labelsize": 4,
+        "ytick.labelsize": 4,
+        "xtick.color": "black",
+        "ytick.color": "black",
+        
+        "axes.linewidth"   : 0.5,  # Line width for the axes
+        "xtick.major.width": 0.25,  # Line width for major x-ticks
+        "ytick.major.width": 0.25,  # Line width for major y-ticks
+        "xtick.minor.width": 0.25,  # Line width for minor x-ticks
+        "ytick.minor.width": 0.25,  # Line width for minor y-ticks
+        
+        "savefig.dpi": 300,
+        "savefig.transparent": False,
+        
+    })
     
+    # Cumulative Pulse Area
+    ax_area = fig.add_subplot(2, 1, 1)
+    ax_area.set_title("Cumulative Pulse Area")
+    dat_area = data["area_nSum"]
+    ax_area.plot(dat_area, linewidth=0.5)
+    for tp in range(1, len(tps)):
+        ax_area.axvspan(tpf[tp - 1], tpf[tp], ymin=0, ymax=0.03,
+                        facecolor=cmap(tp - 1), alpha=1)
+    ax_area.set_ylabel("Cumulative Pulse Area (pixels)")
+    ax_area.set_xlabel("Time (s)")
+    ax_area.set_ylim(-0.02, 0.3)
+    
+    # Add vertical line
+    vline = ax_area.axvline(x=0, color="red", linestyle="--", linewidth=1)
+    fig.vline = vline
+
     # Pulse Frequency
-    plt.subplot(4, 3, 4)
-    plt.title("Pulse Frequency")
-    dat = data["tmax_cat"]
+    ax_freq = fig.add_subplot(2, 3, 4)
+    ax_freq.set_title("Pulse Frequency")
+    dat_freq = data["tmax_cat"]
     for tp in range(1, len(tps)):
-        plt.bar(
-            vlabels[tp - 1], 
-            dat[tp - 1], 
-            color=cmap(tp - 1),
-            )
-    plt.ylabel("Pulse Number (min-1)")
-    plt.xlabel("Time Categories (s)")
-    
+        ax_freq.bar(vlabels[tp - 1], dat_freq[tp - 1], color=cmap(tp - 1))
+    ax_freq.set_ylabel("Pulse Number (min-1)")
+    ax_freq.set_xlabel("Time Categories (s)")
+
     # Boxplots (Area)
-    plt.subplot(4, 3, 5)
-    plt.title("Pulse Area (cat.)")
-    dat = data["tmax_area_cat"]
+    ax_area_box = fig.add_subplot(2, 3, 5)
+    ax_area_box.set_title("Pulse Area (cat.)")
+    dat_area_box = data["tmax_area_cat"]
     for tp in range(1, len(tps)):
-        plt.boxplot(dat[tp - 1], positions=[tp], widths=0.6, showfliers=False)
-    plt.xticks(np.arange(1, len(tps)), vlabels)
-    plt.ylabel("Pulse Area (pixels)")
-    plt.xlabel("Time Categories (s)")
-    
+        ax_area_box.boxplot(dat_area_box[tp - 1], positions=[tp], widths=0.6, showfliers=False)
+    ax_area_box.set_xticks(np.arange(1, len(tps)))
+    ax_area_box.set_xticklabels(vlabels)
+    ax_area_box.set_ylabel("Pulse Area (pixels)")
+    ax_area_box.set_xlabel("Time Categories (s)")
+
     # Boxplots (Intensity)
-    plt.subplot(4, 3, 6)
-    plt.title("Pulse Intensity (cat.)")
-    dat = data["tmax_ints_cat"]
+    ax_int_box = fig.add_subplot(2, 3, 6)
+    ax_int_box.set_title("Pulse Intensity (cat.)")
+    dat_int_box = data["tmax_ints_cat"]
     for tp in range(1, len(tps)):
-        plt.boxplot(dat[tp - 1], positions=[tp], widths=0.6, showfliers=False)
-    plt.xticks(np.arange(1, len(tps)), vlabels)
-    plt.ylabel("Fluo. Int. Change (s-1)")
-    plt.xlabel("Time Categories (s)")
-    
-    plt.tight_layout()
-    plt.show()
+        ax_int_box.boxplot(dat_int_box[tp - 1], positions=[tp], widths=0.6, showfliers=False)
+    ax_int_box.set_xticks(np.arange(1, len(tps)))
+    ax_int_box.set_xticklabels(vlabels)
+    ax_int_box.set_ylabel("Fluo. Int. Change (s-1)")
+    ax_int_box.set_xlabel("Time Categories (s)")
+
+    # Save figure if needed (or simply return it)
+    # plt.savefig(fig_path, format="png")
+
+    return fig
     
 #%% Function : display() ------------------------------------------------------
 
@@ -464,9 +512,18 @@ class Display:
     
     def __init__(self, paths):
         self.paths = paths
+        if isinstance(self.paths, Path):
+            self.paths = [self.paths]
+        self.z = 0
         self.idx = 0
         self.init_data()
         self.init_viewer()
+
+        # QTimer vline updates
+        self.timer = QTimer()
+        self.timer.setInterval(20)  # delay in ms
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.update_vline)
 
     def init_data(self):
         
@@ -482,6 +539,7 @@ class Display:
         grd_path = data_path / f"{path.stem}_rf-{rf}_grd.tif" 
         out_path = data_path / f"{path.stem}_rf-{rf}_out.tif" 
         lbl_path = data_path / f"{path.stem}_rf-{rf}_lbl.tif"
+        dat_path = data_path / f"{path.stem}_rf-{rf}_data.pkl"
         
         # Load data
         self.stk = io.imread(stk_path)
@@ -490,7 +548,9 @@ class Display:
         self.grd = io.imread(grd_path)
         self.out = io.imread(out_path)
         self.lbl = io.imread(lbl_path)
-    
+        with open(str(dat_path), "rb") as f:
+            self.data = pickle.load(f)
+            
     def init_viewer(self):
         
         # Create viewer
@@ -518,7 +578,7 @@ class Display:
             )
         self.viewer.add_image(
             self.grd, name="grd", visible=0,
-            colormap="gray", 
+            colormap="twilight", 
             contrast_limits=get_contrast_limits(self.grd),
             blending="additive", 
             )
@@ -531,6 +591,8 @@ class Display:
             self.lbl, name="lbl", visible=0,
             blending="additive", 
             )
+        
+        self.viewer.dims.set_point(0, self.z)
     
         # Create "stack" menu
         self.stk_group_box = QGroupBox("Select stack")
@@ -563,36 +625,37 @@ class Display:
         self.info_path.setText(
             f"{self.paths[self.idx].name}"
             )
+        self.info_vars = QLabel()
+        self.info_vars.setFont(QFont("Consolas"))
+        self.info_vars.setText(
+            f"thresh (grd) = {self.data['thresh']:.6f}"
+            )       
         self.info_shortcuts = QLabel()
         self.info_shortcuts.setFont(QFont("Consolas"))
         self.info_shortcuts.setText(
-            "prev/next stack  : page down/up \n"
+            "prev/next stack  : page down/up"
             )
         
-        # Create layout
+        # Create plot
+        self.figure = plot(self.paths[self.idx])
+        self.canvas = FigureCanvas(self.figure)
+                
+        # Assemble layout
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.stk_group_box)
         self.layout.addWidget(self.dsp_group_box)
         self.layout.addSpacing(10)
         self.layout.addWidget(self.info_path)
+        self.layout.addWidget(self.info_vars)
         self.layout.addWidget(self.info_shortcuts)
-        
-        # --- Add matplotlib figure ---
-        # Create a matplotlib figure and canvas
-        self.figure = Figure(figsize=(5, 4))
-        self.canvas = FigureCanvas(self.figure)
-        # Create an axes instance
-        self.ax = self.figure.add_subplot(111)
-        # Example plot: you can replace this with your custom plotting code
-        self.ax.plot([0, 1, 2, 3, 4], [0, 1, 0, 1, 0])
-        # Add the canvas to your layout
         self.layout.addWidget(self.canvas)
-        
+
         # Create widget
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
         self.viewer.window.add_dock_widget(
             self.widget, area="right", name="Painter") 
+        self.viewer.dims.events.current_step.connect(self.on_slice_change)
         
         # Shortcuts
 
@@ -605,6 +668,10 @@ class Display:
             self.next_stk()
     
     # Methods
+    
+    def on_slice_change(self, event):
+        self.z = self.viewer.dims.current_step[0]
+        self.timer.start()
     
     def update_layers(self):
         self.viewer.layers["stk"].data = self.stk
@@ -620,13 +687,27 @@ class Display:
          
     def update_text(self):
         self.info_path.setText(f"{self.paths[self.idx].name}")
-    
+        
+    def update_plot(self):
+        index = self.layout.indexOf(self.canvas)
+        self.layout.removeWidget(self.canvas)
+        self.canvas.setParent(None)
+        self.figure = plot(self.paths[self.idx])
+        self.canvas = FigureCanvas(self.figure)
+        self.layout.insertWidget(index, self.canvas)
+        self.canvas.draw_idle()
+        
+    def update_vline(self):
+        self.figure.vline.set_xdata([self.z, self.z])
+        self.canvas.draw_idle()
+                            
     def next_stk(self):
         if self.idx < len(self.paths) - 1:
             self.idx += 1
             self.init_data()
             self.update_layers()
             self.update_text()
+            self.update_plot()
             
     def prev_stk(self):
         if self.idx > 0:
@@ -634,6 +715,7 @@ class Display:
             self.init_data()
             self.update_layers()
             self.update_text()
+            self.update_plot()
 
     def show_raw(self):
         for name in self.viewer.layers:
@@ -655,19 +737,48 @@ class Display:
 
 if __name__ == "__main__":
     
-    for path in ome_paths: 
+    # for path in ome_paths: 
         
-        # Execute
-        extract(path)
-        process(path)
-        analyse(
-            path, 
-            thresh_coeff=thresh_coeff, 
-            min_size=min_size, 
-            tps=tps,
-            )
+        # # Execute
+        # extract(path)
+        # process(path)
+        # analyse(
+        #     path, 
+        #     thresh_coeff=thresh_coeff, 
+        #     min_size=min_size, 
+        #     tps=tps,
+        #     )
+        
+#%% 
     
-    # # Display
-    # Display(ome_paths)
+    idx = 1
+    path = ome_paths[idx]
     
-    plot(ome_paths[0])
+    # Analyse
+    analyse(
+        path, 
+        thresh_coeff=thresh_coeff, 
+        min_size=min_size, 
+        tps=tps,
+        )
+    
+    # Display
+    Display(ome_paths[idx])
+
+#%% 
+
+    # from bdtools.norm import norm_gcn, norm_pct
+
+    # for path in ome_paths: 
+        
+    #     name = path.stem
+    #     rf, fr = get_info(path)
+    #     grd_path = data_path / f"{path.stem}_rf-{rf}_grd.tif"
+    #     grd = io.imread(grd_path)
+    #     grd = norm_pct(grd, sample_fraction=0.01)
+        
+    #     print(
+    #         f"{name} : grd mean   = {np.nanmean(grd):.6f}\n"
+    #         f"{name} : grd median = {np.nanmedian(grd):.6f}\n"
+    #         f"{name} : grd high   = {np.nanpercentile(grd, 99.9):.6f}\n"
+    #         )
