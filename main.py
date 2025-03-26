@@ -24,6 +24,7 @@ from skimage.morphology import binary_dilation, remove_small_objects
 # Scipy
 from scipy.sparse import diags, spdiags
 from scipy.sparse.linalg import spsolve
+from scipy.signal import butter, filtfilt
 
 # Napari
 import napari
@@ -43,23 +44,35 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas)
 
+#%% Comments ------------------------------------------------------------------
+
+'''
+- Pulse intensity (Fluo. int. change (s-1)) should be adjusted with various fr
+'''
+
 #%% Inputs --------------------------------------------------------------------
 
 # Procedure
 run_extract = 0
-run_process = 0
+run_process = 1
 run_analyse = 1
 
-# Parameters (analyse)
-thresh_coeff = 1.2
+# Parmeters
+
+# process()
+
+
+
+# analyse()
+thresh_coeff = 1.1
 min_size = 320
 tps = [0, 300, 900, 1800, 2700]
 
 #%% Initialize ----------------------------------------------------------------
 
 # Paths
-data_path = Path("D:\local_Ding\data")
-# data_path = Path(r"\\scopem-idadata.ethz.ch\BDehapiot\remote_Ding\data")
+# data_path = Path("D:\local_Ding\data")
+data_path = Path(r"\\scopem-idadata.ethz.ch\BDehapiot\remote_Ding\data")
 ome_paths = list(data_path.glob("*.ome"))
 
 #%% Function(s) ---------------------------------------------------------------
@@ -176,10 +189,10 @@ def extract(path):
 
 #%% Function : process() ------------------------------------------------------
 
-def process(path):
+def process(path, lowpass=False):
            
     # Asymetric least square (asl) 
-    def get_als(y, lam=1e7, p=0.001, niter=5): # Parameters
+    def get_als(y, lam=1e7, p=0.001, niter=5): # Parameters (lam=1e7, p=0.001, niter=5)
         L = len(y)
         D = diags([1, -2, 1],[0, -1, -2], shape=(L, L - 2))
         w = np.ones(L)
@@ -190,9 +203,23 @@ def process(path):
             w = p * (y > z) + (1 - p) * (y < z)
         return z
     
+    def butter_lowpass(cutoff, fs, order=5):
+        nyq = 0.5 * fs
+        normal_cutoff = cutoff / nyq
+        b, a = butter(order, normal_cutoff, btype='low', analog=False)
+        return b, a
+    
+    def butter_lowpass_filter(data, cutoff, fs, order=5):
+        b, a = butter_lowpass(cutoff, fs, order=order)
+        y = filtfilt(b, a, data)
+        return y
+    
     def _process(y):
         sub = y - get_als(y)
         grd = np.gradient(sub, axis=0)
+        if lowpass:
+            fs, cutoff, order = 1, 0.1, 2
+            grd = butter_lowpass_filter(grd, cutoff, fs, order)
         grd = np.roll(grd, 1, axis=0)
         return sub, grd
     
@@ -220,7 +247,7 @@ def process(path):
         msk = remove_small_objects(msk, min_size=2048*rf)
         
         # Filter stack
-        flt = nan_filt(stk, mask=msk > 0, kernel_size=(1, 3, 3), iterations=3)
+        flt = nan_filt(stk, mask=msk > 0, kernel_size=(1, 3, 3), iterations=1)
         
         # Process
         sub = np.full_like(flt, np.nan)
@@ -249,12 +276,18 @@ def process(path):
 
 def analyse(
         path,
-        thresh_coeff=0.1, 
+        thresh_coeff=1.0, 
         min_size=320, 
         tps=[0, 300, 900, 1800, 2700],
         ):
     
     # Nested function(s) ------------------------------------------------------
+
+    def auto_thresh(grd, thresh_coeff=0.25, pct_high=95):
+        med = np.nanmedian(grd)
+        hgh = np.nanpercentile(grd, pct_high)
+        thresh = med + ((hgh - med) * thresh_coeff)
+        return thresh, med, hgh
 
     def segment_pulses(grd, thresh, min_size=min_size):
         lbl, out = [], []
@@ -291,11 +324,8 @@ def analyse(
         min_size = int(min_size * rf)
         tpf = [tp * fr for tp in tps]
         
-        # Auto thresholding
-        grd = norm_pct(grd)
-        thresh = np.nanmedian(grd) * thresh_coeff
-
         # Segment pulses
+        thresh, med, hgh = auto_thresh(grd, thresh_coeff=thresh_coeff)
         lbl, out = segment_pulses(
             grd, thresh, min_size=min_size)
                     
@@ -333,16 +363,6 @@ def analyse(
         area_reg = np.vstack(match_list(area_reg)).T
         ints_reg = np.vstack(match_list(ints_reg)).T
                
-        # tmax_cat, tmax_area_cat, tmax_ints_cat = [], [], []
-        # area_reg_avgCat, ints_reg_avgCat = [], []
-        # for tp in range(1, len(tpf)):
-        #     valid = (tmax > tpf[tp - 1]) & (tmax <= tpf[tp])
-        #     tmax_cat.append(np.sum(valid))
-        #     tmax_area_cat.append(tmax_area[valid])
-        #     tmax_ints_cat.append(tmax_ints[valid])           
-        #     area_reg_avgCat.append(np.nanmean(area_reg[:, valid], axis=1))
-        #     ints_reg_avgCat.append(np.nanmean(ints_reg[:, valid], axis=1))
-                                    
         def safe_nanmean(a, axis=1):
             if a.shape[axis] == 0:
                 return np.full(a.shape[0], np.nan)
@@ -366,6 +386,16 @@ def analyse(
             area_reg_avgCat.append(area_avg)
             ints_reg_avgCat.append(ints_avg)
         
+        # tmax_cat, tmax_area_cat, tmax_ints_cat = [], [], []
+        # area_reg_avgCat, ints_reg_avgCat = [], []
+        # for tp in range(1, len(tpf)):
+        #     valid = (tmax > tpf[tp - 1]) & (tmax <= tpf[tp])
+        #     tmax_cat.append(np.sum(valid))
+        #     tmax_area_cat.append(tmax_area[valid])
+        #     tmax_ints_cat.append(tmax_ints[valid])           
+        #     area_reg_avgCat.append(np.nanmean(area_reg[:, valid], axis=1))
+        #     ints_reg_avgCat.append(np.nanmean(ints_reg[:, valid], axis=1))
+                                    
         for tp in range(1, len(tps)):
             tmax_cat[tp - 1] /= (tps[tp] - tps[tp - 1]) / (60 * fr)  # pulse per min
                
@@ -378,8 +408,12 @@ def analyse(
             "nT"              : nT,              # number of timepoints
             "nP"              : nP,              # number of pulses
             "total_area"      : total_area,      # total area (msk area)
+            
+            # Thresholding
             "thresh"          : thresh,          # threshold for grd pulses
-                        
+            "med"             : med, 
+            "hgh"             : hgh,
+                         
             # Data
             "area"            : area,            # row = time, col = pulse, val = area
             "ints"            : ints,            # row = time, col = pulse, val = ints
@@ -414,10 +448,12 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     rf, fr = get_info(path)
     
     # Path(s)
+    grd_path = data_path / f"{path.stem}_rf-{rf}_grd.tif"
     dat_path = data_path / f"{path.stem}_rf-{rf}_data.pkl"
     fig_path = data_path / f"{path.stem}_rf-{rf}_fig.png"
        
     # Load data
+    grd = io.imread(grd_path)
     with open(str(dat_path), "rb") as f:
         data = pickle.load(f)
 
@@ -428,7 +464,7 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     vlabels = [f"{int(tps[tp-1])}\n{int(tps[tp])}" for tp in range(1, len(tps))]
 
     # Create figure
-    fig = plt.figure(figsize=(3, 3), layout="tight")
+    fig = plt.figure(figsize=(4, 4), layout="tight")
 
     mpl.rcParams.update({
         
@@ -455,7 +491,7 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     })
     
     # Cumulative Pulse Area
-    ax_area = fig.add_subplot(2, 1, 1)
+    ax_area = fig.add_subplot(3, 1, 1)
     ax_area.set_title("Cumulative Pulse Area")
     dat_area = data["area_nSum"]
     ax_area.plot(dat_area, linewidth=0.5)
@@ -470,8 +506,16 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     vline = ax_area.axvline(x=0, color="red", linestyle="--", linewidth=1)
     fig.vline = vline
 
+    # Pulse Segmentation
+    ax_hist = fig.add_subplot(3, 2, 3)
+    ax_hist.set_title("Int. Dist.")
+    ax_hist.hist(grd.ravel(), bins=1000)
+    ax_hist.set_xlim(data["med"] * 0.5, data["med"] * 1.5)
+    
+    print(data["med"])
+
     # Pulse Frequency
-    ax_freq = fig.add_subplot(2, 3, 4)
+    ax_freq = fig.add_subplot(3, 2, 4)
     ax_freq.set_title("Pulse Frequency")
     dat_freq = data["tmax_cat"]
     for tp in range(1, len(tps)):
@@ -480,7 +524,7 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     ax_freq.set_xlabel("Time Categories (s)")
 
     # Boxplots (Area)
-    ax_area_box = fig.add_subplot(2, 3, 5)
+    ax_area_box = fig.add_subplot(3, 3, 8)
     ax_area_box.set_title("Pulse Area (cat.)")
     dat_area_box = data["tmax_area_cat"]
     for tp in range(1, len(tps)):
@@ -491,7 +535,7 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     ax_area_box.set_xlabel("Time Categories (s)")
 
     # Boxplots (Intensity)
-    ax_int_box = fig.add_subplot(2, 3, 6)
+    ax_int_box = fig.add_subplot(3, 3, 9)
     ax_int_box.set_title("Pulse Intensity (cat.)")
     dat_int_box = data["tmax_ints_cat"]
     for tp in range(1, len(tps)):
@@ -560,25 +604,25 @@ class Display:
         
         self.viewer.add_image(
             self.stk, name="stk", visible=1, 
-            colormap="gray", 
+            colormap="plasma", 
             contrast_limits=get_contrast_limits(self.stk),
             blending="additive", 
             )
         self.viewer.add_image(
             self.flt, name="flt", visible=0, 
-            colormap="gray", 
+            colormap="plasma", 
             contrast_limits=get_contrast_limits(self.flt),
             blending="additive", 
             )
         self.viewer.add_image(
             self.sub, name="sub", visible=0,
-            colormap="gray", 
+            colormap="plasma", 
             contrast_limits=get_contrast_limits(self.sub),
             blending="additive",
             )
         self.viewer.add_image(
             self.grd, name="grd", visible=0,
-            colormap="twilight", 
+            colormap="plasma", 
             contrast_limits=get_contrast_limits(self.grd),
             blending="additive", 
             )
@@ -609,13 +653,17 @@ class Display:
         self.dsp_group_box = QGroupBox("Display")
         dsp_group_layout = QHBoxLayout()
         self.rad_raw = QRadioButton("raw")
-        self.rad_seg = QRadioButton("segmentation")
+        self.rad_sub = QRadioButton("sub")
+        self.rad_seg = QRadioButton("seg")
         self.rad_raw.setChecked(True)
         dsp_group_layout.addWidget(self.rad_raw)
+        dsp_group_layout.addWidget(self.rad_sub)
         dsp_group_layout.addWidget(self.rad_seg)
         self.dsp_group_box.setLayout(dsp_group_layout)
         self.rad_raw.toggled.connect(
             lambda checked: self.show_raw() if checked else None)
+        self.rad_sub.toggled.connect(
+            lambda checked: self.show_sub() if checked else None)
         self.rad_seg.toggled.connect(
             lambda checked: self.show_seg() if checked else None)
         
@@ -724,6 +772,16 @@ class Display:
                 self.viewer.layers[name].visible = 1
             else:
                 self.viewer.layers[name].visible = 0
+        self.viewer.layers.selection.active = self.viewer.layers["stk"]
+        
+    def show_sub(self):
+        for name in self.viewer.layers:
+            name = str(name)
+            if "sub" in name:
+                self.viewer.layers[name].visible = 1
+            else:
+                self.viewer.layers[name].visible = 0
+        self.viewer.layers.selection.active = self.viewer.layers["sub"]
 
     def show_seg(self):
         for name in self.viewer.layers:
@@ -732,6 +790,7 @@ class Display:
                 self.viewer.layers[name].visible = 1
             else:
                 self.viewer.layers[name].visible = 0
+        self.viewer.layers.selection.active = self.viewer.layers["grd"]
 
 #%% Execute -------------------------------------------------------------------
 
@@ -750,11 +809,12 @@ if __name__ == "__main__":
         #     )
         
 #%% 
-    
-    idx = 1
+
+    idx = 4
     path = ome_paths[idx]
     
-    # Analyse
+    # Execute
+    process(path, lowpass=False)
     analyse(
         path, 
         thresh_coeff=thresh_coeff, 
@@ -762,23 +822,52 @@ if __name__ == "__main__":
         tps=tps,
         )
     
-    # Display
-    Display(ome_paths[idx])
+    # rf, fr = get_info(path)
+    # grd_path = data_path / f"{path.stem}_rf-{rf}_grd.tif"
+    # grd = io.imread(grd_path)
+        
+    # Plot
+    plot(ome_paths[idx])
+    
+    # # Display
+    # Display(ome_paths[idx])
 
 #%% 
 
-    # from bdtools.norm import norm_gcn, norm_pct
+    # def auto_thresh(grd, thresh_coeff=0.25, pct_high=95):
+    #     med = np.nanmedian(grd)
+    #     hgh = np.nanpercentile(grd, pct_high)
+    #     return medn + ((phgh - medn) * thresh_coeff)
+        
 
-    # for path in ome_paths: 
+    # fig, axes = plt.subplots(2, 2, figsize=(4, 4))
+    
+    # for i, (ax, path) in enumerate(zip(axes.ravel(), ome_paths)):
         
     #     name = path.stem
     #     rf, fr = get_info(path)
     #     grd_path = data_path / f"{path.stem}_rf-{rf}_grd.tif"
     #     grd = io.imread(grd_path)
-    #     grd = norm_pct(grd, sample_fraction=0.01)
+    #     grd = norm_pct(grd, sample_fraction=0.1)
+        
+    #     mean = np.nanmean(grd)
+    #     medn = np.nanmedian(grd)
+    #     plow = np.nanpercentile(grd, 5)
+    #     phgh = np.nanpercentile(grd, 95)
+        
+    #     thresh_coeff = 0.25
+    #     thresh = medn + ((phgh - medn) * thresh_coeff)
         
     #     print(
-    #         f"{name} : grd mean   = {np.nanmean(grd):.6f}\n"
-    #         f"{name} : grd median = {np.nanmedian(grd):.6f}\n"
-    #         f"{name} : grd high   = {np.nanpercentile(grd, 99.9):.6f}\n"
+    #         f"{name} : mean       = {mean:.6f}\n"
+    #         f"{name} : median     = {medn:.6f}\n"
+    #         f"{name} : plow/phigh = {plow:.6f}/{phgh:.6f}\n"
     #         )
+
+    #     ax.hist(grd.ravel(), bins=1000)
+    #     ax.axvline(x=plow, color="k", linewidth=0.5, linestyle=":")
+    #     ax.axvline(x=medn, color="k", linewidth=0.5)
+    #     ax.axvline(x=thresh, color="r", linewidth=0.5)
+    #     ax.axvline(x=phgh, color="k", linewidth=0.5, linestyle=":")
+    #     ax.set_xlim(medn * 0.5, medn * 1.5)
+        
