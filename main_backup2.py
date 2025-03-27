@@ -62,7 +62,7 @@ run_analyse = 1
 # process()
 
 # analyse()
-thresh_coeff = 1.0
+thresh_coeff = 0.33
 min_size = 320
 tps = [0, 300, 900, 1800, 2700]
 
@@ -279,8 +279,6 @@ def analyse(
         tps=[0, 300, 900, 1800, 2700],
         ):
     
-    global data
-    
     # Nested function(s) ------------------------------------------------------
 
     def auto_thresh(grd, thresh_coeff=thresh_coeff):
@@ -326,7 +324,7 @@ def analyse(
         
         # Segment pulses
         med, std, thresh = auto_thresh(grd)
-        lbl, out = segment_pulses(grd, thresh, min_size=min_size)
+        lbl, out = segment_pulses(grd, thresh)
                     
         # Measure pulses
         nT = grd.shape[0] 
@@ -335,7 +333,7 @@ def analyse(
         
         area = np.full((nT, nP), np.nan)
         ints = np.full((nT, nP), np.nan)
-        
+        drtn = np.full(nP, np.nan)
         for t in range(nT):
             vals = grd[t, ...].ravel()
             lvals = lbl[t, ...].ravel()
@@ -343,9 +341,8 @@ def analyse(
                 valid = lvals == l
                 area[t, l - 1] = np.sum(valid)
                 ints[t, l - 1] = np.mean(vals[valid])
-        span = np.sum(~np.isnan(area), axis=0)
         area_nSum = np.nansum(area, axis=1) / total_area
-
+                
         tmax, tmax_area, tmax_ints = [], [], []  
         area_reg, ints_reg = [], []
         for l in range(nP):
@@ -374,7 +371,7 @@ def analyse(
                     warnings.simplefilter("ignore", RuntimeWarning)
                     return np.nanmean(a, axis=axis)
         
-        tmax_cat, tmax_area_cat, tmax_ints_cat, span_cat = [], [], [], []
+        tmax_cat, tmax_area_cat, tmax_ints_cat = [], [], []
         area_reg_avgCat, ints_reg_avgCat = [], []
         for tp in range(1, len(tpf)):
             valid = (tmax > tpf[tp - 1]) & (tmax <= tpf[tp])
@@ -382,7 +379,6 @@ def analyse(
             tmax_cat.append(num_valid)
             tmax_area_cat.append(tmax_area[valid])
             tmax_ints_cat.append(tmax_ints[valid])
-            span_cat.append(span[valid])
             area_avg = safe_nanmean(area_reg[:, valid], axis=1)
             ints_avg = safe_nanmean(ints_reg[:, valid], axis=1)
             area_reg_avgCat.append(area_avg)
@@ -419,17 +415,17 @@ def analyse(
             # Data
             "area"            : area,            # row = time, col = pulse, val = area
             "ints"            : ints,            # row = time, col = pulse, val = ints
-            "span"            : span,            # row = pulse, val = duration
             "area_nSum"       : area_nSum,       # row = % of total area covered by pulse
-
             "tmax"            : tmax,            # row = time of pulse max. area
             "tmax_area"       : tmax_area,       # row = area of pulse max. area
             "tmax_ints"       : tmax_ints,       # row = ints of pulse max. area
-            
             "tmax_cat"        : tmax_cat,        # ...
             "tmax_area_cat"   : tmax_area_cat,   # ...
             "tmax_ints_cat"   : tmax_ints_cat,   # ...
-            "span_cat"        : span_cat,
+            "area_reg"        : area_reg,        # ...
+            "ints_reg"        : ints_reg,        # ...
+            "area_reg_avgCat" : area_reg_avgCat, # ...
+            "ints_reg_avgCat" : ints_reg_avgCat, # ...
             
             }
         
@@ -549,8 +545,19 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     ax_area_box.set_ylabel("Pulse Area (pixels)")
     ax_area_box.set_xlabel("Time Categories (s)")
 
+    # Boxplots (Area)
+    ax_area_box = fig.add_subplot(3, 3, 8)
+    ax_area_box.set_title("Pulse Area (cat.)")
+    dat_area_box = data["tmax_area_cat"]
+    for tp in range(1, len(tps)):
+        ax_area_box.boxplot(dat_area_box[tp - 1], positions=[tp], widths=0.6, showfliers=False)
+    ax_area_box.set_xticks(np.arange(1, len(tps)))
+    ax_area_box.set_xticklabels(vlabels)
+    ax_area_box.set_ylabel("Pulse Area (pixels)")
+    ax_area_box.set_xlabel("Time Categories (s)")
+
     # Boxplots (Intensity)
-    ax_int_box = fig.add_subplot(3, 3, 8)
+    ax_int_box = fig.add_subplot(3, 3, 9)
     ax_int_box.set_title("Pulse Intensity (cat.)")
     dat_int_box = data["tmax_ints_cat"]
     for tp in range(1, len(tps)):
@@ -559,17 +566,6 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     ax_int_box.set_xticklabels(vlabels)
     ax_int_box.set_ylabel("Fluo. Int. Change (s-1)")
     ax_int_box.set_xlabel("Time Categories (s)")
-
-    # Boxplots (Area)
-    ax_span_box = fig.add_subplot(3, 3, 9)
-    ax_span_box.set_title("Pulse Duration (cat.)")
-    dat_span_box = data["span_cat"]
-    for tp in range(1, len(tps)):
-        ax_span_box.boxplot(dat_span_box[tp - 1], positions=[tp], widths=0.6, showfliers=False)
-    ax_span_box.set_xticks(np.arange(1, len(tps)))
-    ax_span_box.set_xticklabels(vlabels)
-    ax_span_box.set_ylabel("Pulse Duration (timepoint(s))")
-    ax_span_box.set_xlabel("Time Categories (s)")
 
     # Save figure if needed (or simply return it)
     # plt.savefig(fig_path, format="png")
@@ -836,7 +832,7 @@ if __name__ == "__main__":
         
 #%% 
 
-    idx = 5
+    idx = 4
     path = ome_paths[idx]
     
     # Execute
@@ -848,9 +844,9 @@ if __name__ == "__main__":
         tps=tps,
         )
     
-    # rf, fr = get_info(path)
-    # grd_path = data_path / f"{path.stem}_rf-{rf}_grd.tif"
-    # grd = io.imread(grd_path)
+    rf, fr = get_info(path)
+    grd_path = data_path / f"{path.stem}_rf-{rf}_grd.tif"
+    grd = io.imread(grd_path)
         
     # Plot
     plot(ome_paths[idx])
