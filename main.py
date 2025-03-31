@@ -550,6 +550,9 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     ax_ints.set_ylabel("Fluo. Int. Change (s-1)")
     ax_ints.set_xlabel("Time Categories (s)")
     ax_ints.set_ylim(0, 1.0)
+    
+    # Save
+    plt.savefig(fig_path, format="png")
 
     return fig
     
@@ -815,6 +818,7 @@ if __name__ == "__main__":
             min_size=min_size, 
             tps=tps,
             )
+        plot(path)
     Display(ome_paths)
     
     # # Selected
