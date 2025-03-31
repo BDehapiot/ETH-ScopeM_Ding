@@ -39,15 +39,12 @@ from qtpy.QtWidgets import (
 # Matplotlib
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 from matplotlib.gridspec import GridSpec
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas)
 
 #%% Comments ------------------------------------------------------------------
-
-'''
-- Pulse intensity (Fluo. int. change (s-1)) should be adjusted with various fr
-'''
 
 #%% Inputs --------------------------------------------------------------------
 
@@ -58,8 +55,6 @@ run_analyse = 1
 
 # Parmeters
 
-# process()
-
 # analyse()
 thresh_coeff = 1.5
 min_size = 320
@@ -69,8 +64,9 @@ tps = [0, 300, 900, 1800, 2700]
 
 # Paths
 data_path = Path("D:\local_Ding\data")
-# data_path = Path(r"\\scopem-idadata.ethz.ch\BDehapiot\remote_Ding\data")
+data_remote_path = Path(r"\\scopem-idadata.ethz.ch\BDehapiot\remote_Ding\data")
 ome_paths = list(data_path.glob("*.ome"))
+ome_remote_paths = list(data_remote_path.glob("*.ome"))
 
 #%% Function(s) ---------------------------------------------------------------
 
@@ -287,7 +283,7 @@ def analyse(
         std = np.nanstd(grd)
         thresh = med + (std * thresh_coeff)
         return med, std, thresh
-
+    
     def segment_pulses(grd, thresh, min_size=min_size):
         lbl, out = [], []
         for t, img in enumerate(grd):
@@ -299,6 +295,12 @@ def analyse(
         lbl = np.stack(lbl)
         lbl = label(lbl)
         return lbl, out
+    
+    def get_stats(data):    
+        avg = np.mean(data)
+        std = np.std(data)
+        sem = std / np.sqrt(len(data))
+        return {"avg" : avg, "std" : std, "sem" : sem}
     
     # Execute -----------------------------------------------------------------    
     
@@ -321,92 +323,101 @@ def analyse(
                 
         # Initialize
         min_size = int(min_size * rf)
-        tpf = [tp * fr for tp in tps]
-        
+        total_area = np.sum(~np.isnan(grd[0, ...])) / rf
+        tpf = [int(tp * fr) for tp in tps]
+    
         # Segment pulses
         med, std, thresh = auto_thresh(grd)
         lbl, out = segment_pulses(grd, thresh, min_size=min_size)
-                    
+        
         # Measure pulses
+        
         nT = grd.shape[0] 
         nP = np.max(lbl) 
-        total_area = np.sum(~np.isnan(grd[0, ...]))
-        
-        area = np.full((nT, nP), np.nan)
-        ints = np.full((nT, nP), np.nan)
+        nan_area = np.full((nT, nP), np.nan)
+        nan_ints = np.full((nT, nP), np.nan)
+        tmax = np.full(nP, np.nan)
+        area = np.full(nP, np.nan)
+        ints = np.full(nP, np.nan)
         
         for t in range(nT):
             vals = grd[t, ...].ravel()
             lvals = lbl[t, ...].ravel()
             for l in np.unique(lvals)[1:]:
                 valid = lvals == l
-                area[t, l - 1] = np.sum(valid)
-                ints[t, l - 1] = np.mean(vals[valid])
-        span = np.sum(~np.isnan(area), axis=0)
-        area_nSum = np.nansum(area, axis=1) / total_area
-
-        tmax, tmax_area, tmax_ints = [], [], []  
-        area_reg, ints_reg = [], []
-        for l in range(nP):
-            lbl_area = area[:, l]
-            lbl_ints = ints[:, l]
+                nan_area[t, l - 1] = np.sum(valid) / rf
+                nan_ints[t, l - 1] = np.mean(vals[valid])
+        
+        for i, l in enumerate(range(nP)):
+            lbl_area = nan_area[:, l]
+            lbl_ints = nan_ints[:, l]
             lbl_tmax = np.nanargmax(lbl_area)
             valid = ~np.isnan(lbl_area)
-            tmax.append(lbl_tmax)
-            tmax_area.append(lbl_area[lbl_tmax])
-            tmax_ints.append(lbl_ints[lbl_tmax])
-            area_reg.append(lbl_area[valid])
-            ints_reg.append(lbl_ints[valid])
-        tmax = np.stack(tmax)
-        tmax_area = np.stack(tmax_area)
-        tmax_ints = np.stack(tmax_ints)
-        area_reg = np.vstack(match_list(area_reg)).T
-        ints_reg = np.vstack(match_list(ints_reg)).T
-                       
-        tmax_cat, tmax_area_cat, tmax_ints_cat, span_cat = [], [], [], []
+            tmax[i] = lbl_tmax
+            area[i] = lbl_area[lbl_tmax]
+            ints[i] = lbl_ints[lbl_tmax]
+        tdur = np.sum(~np.isnan(nan_area), axis=0) / fr
+        acum = np.nansum(nan_area, axis=1) / total_area 
+        
+        tmax_cat, area_cat, ints_cat, tdur_cat, acum_cat = [], [], [], [], []
         for tp in range(1, len(tpf)):
             valid = (tmax > tpf[tp - 1]) & (tmax <= tpf[tp])
             num_valid = np.count_nonzero(valid)
             tmax_cat.append(num_valid)
-            tmax_area_cat.append(tmax_area[valid])
-            tmax_ints_cat.append(tmax_ints[valid])
-            span_cat.append(span[valid])
-                                    
+            area_cat.append(area[valid])
+            ints_cat.append(ints[valid])
+            tdur_cat.append(tdur[valid])
+            acum_cat.append(acum[tpf[tp - 1]:tpf[tp]])
+            
         for tp in range(1, len(tps)):
             tmax_cat[tp - 1] /= (tps[tp] - tps[tp - 1]) / (60 * fr)  # pulse per min
-               
+            
+        area_cat_stat, ints_cat_stat, tdur_cat_stat, acum_cat_stat = [], [], [], []
+        for i in range(len(area_cat)):
+            area_cat_stat.append(get_stats(area_cat[i]))
+            ints_cat_stat.append(get_stats(ints_cat[i]))
+            tdur_cat_stat.append(get_stats(tdur_cat[i]))
+            acum_cat_stat.append(get_stats(acum_cat[i]))
+                       
         # Fill data
         data = {
             
             # General
-            "path"          : path,            # file path
-            "name"          : path.name,       # file name
-            "nT"            : nT,              # number of timepoints
-            "nP"            : nP,              # number of pulses
-            "total_area"    : total_area,      # total area (msk area)
             
-            # Thresholding
-            "med"           : med,             # median for grd pulses
-            "std"           : std,             # sd for grd pulses
-            "thresh"        : thresh,          # threshold for grd pulses
+            "path"          : path,          # file path
+            "name"          : path.name,     # file name
+            "rf"            : rf,            # rescaling factor
+            "fr"            : fr,            # frame rate (Hz)
+            "tps"           : tps,           # time categories (seconds)
+            "tpf"           : tpf,           # time categories (frames)
+            "nT"            : nT,            # number of timepoints
+            "nP"            : nP,            # number of pulses
+            "thresh"        : thresh,        # threshold for grd pulses
                          
             # Data
-            "area"          : area,            # row = time, col = pulse, val = area
-            "ints"          : ints,            # row = time, col = pulse, val = ints
-            "span"          : span,            # row = pulse duration
-            "area_nSum"     : area_nSum,       # row = % of total area covered by pulse
-
-            "tmax"          : tmax,            # row = time of pulse max. area
-            "tmax_area"     : tmax_area,       # row = area of pulse max. area
-            "tmax_ints"     : tmax_ints,       # row = ints of pulse max. area
             
-            "tmax_cat"      : tmax_cat,        # ...
-            "tmax_area_cat" : tmax_area_cat,   # ...
-            "tmax_ints_cat" : tmax_ints_cat,   # ...
-            "span_cat"      : span_cat,
+            "nan_area"      : nan_area,      # row = time, col = pulse, val = area
+            "nan_ints"      : nan_ints,      # row = time, col = pulse, val = ints
+            
+            "tmax"          : tmax,          # time of pulse max. area
+            "area"          : area,          # pulse area at tmax
+            "ints"          : ints,          # pulse intensity at tmax
+            "tdur"          : tdur,          # pulse duration
+            "acum"          : acum,          # cumulative pulse area
+            
+            "tmax_cat"      : tmax_cat,      # time cat. of tmax
+            "area_cat"      : area_cat,      # time cat. of area
+            "ints_cat"      : ints_cat,      # time cat. of ints
+            "tdur_cat"      : tdur_cat,      # time cat. of tdur
+            "acum_cat"      : acum_cat,      # time cat. of acum
+            
+            "area_cat_stat" : area_cat_stat, # stat of area_cat
+            "ints_cat_stat" : ints_cat_stat, # stat of ints_cat
+            "tdur_cat_stat" : tdur_cat_stat, # stat of tdur_cat
+            "acum_cat_stat" : acum_cat_stat, # stat of acum_cat
             
             }
-        
+           
         # Save
         io.imsave(lbl_path, lbl.astype("uint16"), check_contrast=False)
         io.imsave(out_path, (out * 255).astype("uint8"), check_contrast=False)
@@ -470,16 +481,19 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     # Top row -----------------------------------------------------------------
     
     # Cumulative Pulse Area
-    ax_area = fig.add_subplot(gs[0, :2]) 
-    ax_area.set_title("Cumulative Pulse Area")
-    dat_area = data["acum"]
-    ax_area.plot(dat_area, linewidth=0.5)
+    ax_acum = fig.add_subplot(gs[0, :2]) 
+    ax_acum.set_title("Cumulative Pulse Area")
+    dat_acum = data["acum"]
+    ax_acum.plot(dat_acum, linewidth=0.5)
     for tp in range(1, len(tps)):
-        ax_area.axvspan(tpf[tp - 1], tpf[tp], ymin=0, ymax=0.03,
+        ax_acum.axvspan(tpf[tp - 1], tpf[tp], ymin=0, ymax=0.03,
                         facecolor=cmap(tp - 1), alpha=1)
-    ax_area.set_ylabel("Cumulative Pulse Area (pixels)")
-    ax_area.set_xlabel("Time (s)")
-    ax_area.set_ylim(-0.02, 0.3)
+    ax_acum.set_ylabel("Cumulative Pulse Area (pixels)")
+    ax_acum.set_xlabel("Time (s)")
+    ax_acum.set_ylim(-0.02, 0.3)
+    ax_acum.xaxis.set_major_formatter(
+        ticker.FuncFormatter(lambda x, _: f"{int(x / fr)}")
+        )
         
     # Pulse Frequency
     ax_freq = fig.add_subplot(gs[0, 2]) 
@@ -491,63 +505,51 @@ def plot(path, tps=[0, 300, 900, 1800, 2700]):
     ax_freq.set_xlabel("Time Categories (s)")
     
     # Bottom row --------------------------------------------------------------    
-    
-    boxplot_params = {
         
-        "widths" : 0.6, 
-        "showfliers" : False,
-        # "showmeans" : True, 
-        # "meanprops" : {
-        #     "marker" : "o",
-        #     "markerfacecolor" : cmap(tp - 1), 
-        #     "markeredgecolor" : "black",
-        #     "markersize" : 4
-        #     },
-        # "meanline" : True,
-        
-        }
-    
-    # Boxplots (Area)
-    ax_area_box = fig.add_subplot(gs[1, 0]) 
-    ax_area_box.set_title("Pulse Area (cat.)")
-    dat_area_box = data["area_cat"]
+    # Area
+    ax_area = fig.add_subplot(gs[1, 0]) 
+    ax_area.set_title("Pulse Area (cat.)")
+    dat_area = data["area_cat_stat"]
     for tp in range(1, len(tps)):
-        ax_area_box.boxplot(
-            dat_area_box[tp - 1], positions=[tp], 
-            **boxplot_params
+        ax_area.bar(
+            vlabels[tp - 1], dat_area[tp - 1]["avg"], 
+            yerr=dat_area[tp - 1]["sem"],
+            capsize=2, color=cmap(tp - 1),
+            error_kw={'elinewidth': 0.5, 'capthick': 0.5}
             )
-    ax_area_box.set_xticks(np.arange(1, len(tps)))
-    ax_area_box.set_xticklabels(vlabels)
-    ax_area_box.set_ylabel("Pulse Area (pixels)")
-    ax_area_box.set_xlabel("Time Categories (s)")
+    ax_area.set_ylabel("Pulse Area (pixels)")
+    ax_area.set_xlabel("Time Categories (s)")
+    ax_area.set_ylim(0, 3000)
     
-    # Boxplots (Intensity)
-    ax_int_box = fig.add_subplot(gs[1, 1]) 
-    ax_int_box.set_title("Pulse Intensity (cat.)")
-    dat_int_box = data["ints_cat"]
+    # Duration
+    ax_tdur = fig.add_subplot(gs[1, 1]) 
+    ax_tdur.set_title("Pulse Duration (cat.)")
+    dat_tdur = data["tdur_cat_stat"]
     for tp in range(1, len(tps)):
-        ax_int_box.boxplot(
-            dat_int_box[tp - 1], positions=[tp], 
-            **boxplot_params
+        ax_tdur.bar(
+            vlabels[tp - 1], dat_tdur[tp - 1]["avg"], 
+            yerr=dat_tdur[tp - 1]["sem"],
+            capsize=2, color=cmap(tp - 1),
+            error_kw={'elinewidth': 0.5, 'capthick': 0.5}
             )
-    ax_int_box.set_xticks(np.arange(1, len(tps)))
-    ax_int_box.set_xticklabels(vlabels)
-    ax_int_box.set_ylabel("Fluo. Int. Change (s-1)")
-    ax_int_box.set_xlabel("Time Categories (s)")
+    ax_tdur.set_ylabel("Pulse Duration (s-1)")
+    ax_tdur.set_xlabel("Time Categories (s)")
+    ax_tdur.set_ylim(0, 5)
     
-    # Boxplots (Area)
-    ax_span_box = fig.add_subplot(gs[1, 2]) 
-    ax_span_box.set_title("Pulse Duration (cat.)")
-    dat_span_box = data["tdur_cat"]
+    # Intensity
+    ax_ints = fig.add_subplot(gs[1, 2]) 
+    ax_ints.set_title("Pulse Intensity (cat.)")
+    dat_int = data["ints_cat_stat"]
     for tp in range(1, len(tps)):
-        ax_span_box.boxplot(
-            dat_span_box[tp - 1], positions=[tp], 
-            **boxplot_params
+        ax_ints.bar(
+            vlabels[tp - 1], dat_int[tp - 1]["avg"], 
+            yerr=dat_int[tp - 1]["sem"],
+            capsize=2, color=cmap(tp - 1),
+            error_kw={'elinewidth': 0.5, 'capthick': 0.5}
             )
-    ax_span_box.set_xticks(np.arange(1, len(tps)))
-    ax_span_box.set_xticklabels(vlabels)
-    ax_span_box.set_ylabel("Pulse Duration (timepoint(s))")
-    ax_span_box.set_xlabel("Time Categories (s)")
+    ax_ints.set_ylabel("Fluo. Int. Change (s-1)")
+    ax_ints.set_xlabel("Time Categories (s)")
+    ax_ints.set_ylim(0, 1.0)
 
     return fig
     
@@ -650,10 +652,12 @@ class Display:
         self.rad_raw = QRadioButton("raw")
         self.rad_sub = QRadioButton("sub")
         self.rad_seg = QRadioButton("seg")
+        self.rad_lbl = QRadioButton("lbl")
         self.rad_raw.setChecked(True)
         dsp_group_layout.addWidget(self.rad_raw)
         dsp_group_layout.addWidget(self.rad_sub)
         dsp_group_layout.addWidget(self.rad_seg)
+        dsp_group_layout.addWidget(self.rad_lbl)
         self.dsp_group_box.setLayout(dsp_group_layout)
         self.rad_raw.toggled.connect(
             lambda checked: self.show_raw() if checked else None)
@@ -661,6 +665,8 @@ class Display:
             lambda checked: self.show_sub() if checked else None)
         self.rad_seg.toggled.connect(
             lambda checked: self.show_seg() if checked else None)
+        self.rad_lbl.toggled.connect(
+            lambda checked: self.show_lbl() if checked else None)
         
         # Create texts
         self.info_path = QLabel()
@@ -780,195 +786,45 @@ class Display:
                 self.viewer.layers[name].visible = 1
             else:
                 self.viewer.layers[name].visible = 0
+        self.viewer.layers["grd"].colormap = "plasma"
+        self.viewer.layers["grd"].opacity = 1.0
         self.viewer.layers.selection.active = self.viewer.layers["grd"]
+        
+    def show_lbl(self):
+        for name in self.viewer.layers:
+            name = str(name)
+            if name in ["grd", "out", "lbl"]:
+                self.viewer.layers[name].visible = 1
+            else:
+                self.viewer.layers[name].visible = 0
+        self.viewer.layers["grd"].colormap = "gray"
+        self.viewer.layers["grd"].opacity = 0.25
+        self.viewer.layers.selection.active = self.viewer.layers["lbl"]
 
 #%% Execute -------------------------------------------------------------------
 
 if __name__ == "__main__":
     
+    # Batch
     for path in ome_paths: 
-        
-        # Execute
         extract(path)
         process(path)
-        # analyse(
-        #     path, 
-        #     thresh_coeff=thresh_coeff, 
-        #     min_size=min_size, 
-        #     tps=tps,
-        #     )
-        
-#%% 
-
-path = ome_paths[8]
-
-# Nested function(s) ------------------------------------------------------
-
-def auto_thresh(grd, thresh_coeff=thresh_coeff):
-    med = np.nanmedian(grd)
-    std = np.nanstd(grd)
-    thresh = med + (std * thresh_coeff)
-    return med, std, thresh
-
-def segment_pulses(grd, thresh, min_size=min_size):
-    lbl, out = [], []
-    for t, img in enumerate(grd):
-        msk = img > thresh
-        msk = remove_small_objects(msk, min_size=min_size)
-        lbl.append(msk)
-        out.append(binary_dilation(msk) ^ msk)
-    out = np.stack(out)
-    lbl = np.stack(lbl)
-    lbl = label(lbl)
-    return lbl, out
-
-def get_stats(data):    
-    avg = np.mean(data)
-    std = np.std(data)
-    sem = std / np.sqrt(len(data))
-    return {"avg" : avg, "std" : std, "sem" : sem}
-
-# Execute -----------------------------------------------------------------    
-
-# Get info
-rf, fr = get_info(path)
-
-# Path(s)
-grd_path = data_path / f"{path.stem}_rf-{rf}_grd.tif"
-lbl_path = data_path / f"{path.stem}_rf-{rf}_lbl.tif"
-out_path = data_path / f"{path.stem}_rf-{rf}_out.tif"
-dat_path = data_path / f"{path.stem}_rf-{rf}_data.pkl"
-
-if not dat_path.exists() or run_analyse:
-
-    t0 = time.time()
-    print(f"load data - {path.name} : ", end="", flush=True)    
-
-    # Load data
-    grd = io.imread(grd_path)
+        analyse(
+            path, 
+            thresh_coeff=thresh_coeff, 
+            min_size=min_size, 
+            tps=tps,
+            )
+    Display(ome_paths)
     
-    t1 = time.time()
-    print(f"{t1 - t0:.3f}s")
-            
-    # Initialize
-    min_size = int(min_size * rf)
-    tpf = [int(tp * fr) for tp in tps]
-    
-    t0 = time.time()
-    print(f"segment pulses - {path.name} : ", end="", flush=True)  
-    
-    # Segment pulses
-    med, std, thresh = auto_thresh(grd)
-    lbl, out = segment_pulses(grd, thresh, min_size=min_size)
-    
-    t1 = time.time()
-    print(f"{t1 - t0:.3f}s")
-    
-    # Measure pulses
-    
-    t0 = time.time()
-    print(f"measure pulses - {path.name} : ", end="", flush=True)  
-    
-    nT = grd.shape[0] 
-    nP = np.max(lbl) 
-    nan_area = np.full((nT, nP), np.nan)
-    nan_ints = np.full((nT, nP), np.nan)
-    tmax = np.full(nP, np.nan)
-    area = np.full(nP, np.nan)
-    ints = np.full(nP, np.nan)
-    
-    for t in range(nT):
-        vals = grd[t, ...].ravel()
-        lvals = lbl[t, ...].ravel()
-        for l in np.unique(lvals)[1:]:
-            valid = lvals == l
-            nan_area[t, l - 1] = np.sum(valid)
-            nan_ints[t, l - 1] = np.mean(vals[valid])
-    
-    for i, l in enumerate(range(nP)):
-        lbl_area = nan_area[:, l]
-        lbl_ints = nan_ints[:, l]
-        lbl_tmax = np.nanargmax(lbl_area)
-        valid = ~np.isnan(lbl_area)
-        tmax[i] = lbl_tmax
-        area[i] = lbl_area[lbl_tmax]
-        ints[i] = lbl_ints[lbl_tmax]
-    tdur = np.sum(~np.isnan(nan_area), axis=0)
-    acum = np.nansum(nan_area, axis=1) / np.sum(~np.isnan(grd[0, ...]))
-    
-    tmax_cat, area_cat, ints_cat, tdur_cat, acum_cat = [], [], [], [], []
-    for tp in range(1, len(tpf)):
-        valid = (tmax > tpf[tp - 1]) & (tmax <= tpf[tp])
-        num_valid = np.count_nonzero(valid)
-        tmax_cat.append(num_valid)
-        area_cat.append(area[valid])
-        ints_cat.append(ints[valid])
-        tdur_cat.append(tdur[valid])
-        acum_cat.append(acum[tpf[tp - 1]:tpf[tp]])
-        
-    area_cat_stat, ints_cat_stat, tdur_cat_stat, acum_cat_stat = [], [], [], []
-    for i in range(len(area_cat)):
-        area_cat_stat.append(get_stats(area_cat[i]))
-        ints_cat_stat.append(get_stats(ints_cat[i]))
-        tdur_cat_stat.append(get_stats(tdur_cat[i]))
-        acum_cat_stat.append(get_stats(acum_cat[i]))
-        
-    t1 = time.time()
-    print(f"{t1 - t0:.3f}s")
-    
-    # for tp in range(1, len(tps)):
-    #     tmax_cat[tp - 1] /= (tps[tp] - tps[tp - 1]) / (60 * fr)  # pulse per min
-                   
-    # Fill data
-    data = {
-        
-        # General
-        
-        "path"          : path,          # file path
-        "name"          : path.name,     # file name
-        "rf"            : rf,            # rescaling factor
-        "fr"            : fr,            # frame rate (Hz)
-        "tps"           : tps,           # time categories (seconds)
-        "tpf"           : tpf,           # time categories (frames)
-        "nT"            : nT,            # number of timepoints
-        "nP"            : nP,            # number of pulses
-        "thresh"        : thresh,        # threshold for grd pulses
-                     
-        # Data
-        
-        "nan_area"      : nan_area,      # row = time, col = pulse, val = area
-        "nan_ints"      : nan_ints,      # row = time, col = pulse, val = ints
-        
-        "tmax"          : tmax,          # time of pulse max. area
-        "area"          : area,          # pulse area at tmax
-        "ints"          : ints,          # pulse intensity at tmax
-        "tdur"          : tdur,          # pulse duration
-        "acum"          : acum,          # cumulative pulse area
-        
-        "tmax_cat"      : tmax_cat,      # time cat. of tmax
-        "area_cat"      : area_cat,      # time cat. of area
-        "ints_cat"      : ints_cat,      # time cat. of ints
-        "tdur_cat"      : tdur_cat,      # time cat. of tdur
-        "acum_cat"      : acum_cat,      # time cat. of acum
-        
-        "area_cat_stat" : area_cat_stat, # stat of area_cat
-        "ints_cat_stat" : ints_cat_stat, # stat of ints_cat
-        "tdur_cat_stat" : tdur_cat_stat, # stat of tdur_cat
-        "acum_cat_stat" : acum_cat_stat, # stat of acum_cat
-        
-        }
-       
-    t0 = time.time()
-    print(f"save data - {path.name} : ", end="", flush=True)  
-    
-    # Save
-    io.imsave(lbl_path, lbl.astype("uint16"), check_contrast=False)
-    io.imsave(out_path, (out * 255).astype("uint8"), check_contrast=False)
-    with open(str(dat_path), "wb") as f:
-        pickle.dump(data, f)
-        
-    t1 = time.time()
-    print(f"{t1 - t0:.3f}s")
-    
-Display(path)
-
+    # # Selected
+    # path = ome_paths[8]
+    # extract(path)
+    # process(path)
+    # analyse(
+    #     path, 
+    #     thresh_coeff=thresh_coeff, 
+    #     min_size=min_size, 
+    #     tps=tps,
+    #     )
+    # Display(path)
